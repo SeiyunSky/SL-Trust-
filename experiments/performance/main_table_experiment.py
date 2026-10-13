@@ -1,5 +1,5 @@
 """
-主表实验：8方法 × 10攻击
+配置驱动的主表/精简泛化矩阵实验
 并行由 TUI 的 run_parallel 在进程层调度，本文件只负责单个 (method, attack) 组合。
 通过环境变量 MVP_METHOD / MVP_ATTACK / MVP_SEED 接收参数。
 
@@ -22,13 +22,14 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from trainer import FederatedTrainer
 from utils import run_dir_name
 from experiment_io import load_cached_result, save_result
+from experiment_matrix import main_table_tasks
 
 plt.rcParams['font.family'] = 'DejaVu Sans'
 
-MAIN_METHODS = ['fedavg', 'sama', 'balance', 'krum', 'trimmed_mean', 'contra', 'contra_hard', 'sltrust']
+DEFAULT_METHODS = ['fedavg', 'sama', 'balance', 'krum', 'trimmed_mean', 'contra', 'contra_hard', 'sltrust']
+MAIN_METHODS = list(DEFAULT_METHODS)
 METHOD_LABELS = {
     'fedavg':       'FedAvg (baseline)',
     'sama':         'SAMA',
@@ -53,8 +54,9 @@ METHOD_STYLES = {m: ('-' if m == 'sltrust' else '--') for m in MAIN_METHODS}
 
 # ALIE 已从论文计划删除。Slow Poison 对 norm-aligned 方法与 Sign Flip
 # 等价，但对不执行幅度对齐的基线仍可能不同，因此保留在完整主表中。
-MAIN_ATTACKS = ['none', 'sign_flip', 'gaussian', 'burn_in', 'oscillating',
-                'slow_poison', 'gradual_flip', 'backdoor']
+DEFAULT_ATTACKS = ['none', 'sign_flip', 'gaussian', 'burn_in', 'oscillating',
+                   'slow_poison', 'gradual_flip', 'backdoor']
+MAIN_ATTACKS = list(DEFAULT_ATTACKS)
 ATTACK_LABELS = {
     'none':         'No Attack',
     'sign_flip':    'Sign Flip',
@@ -81,6 +83,26 @@ ATTACK_COLORS = {
 }
 
 
+def matrix_values(cfg: dict):
+    matrix = cfg.get('matrix', {})
+    methods = matrix.get('methods', DEFAULT_METHODS)
+    attacks = matrix.get('attacks', DEFAULT_ATTACKS)
+    unknown_methods = set(methods) - set(METHOD_LABELS)
+    unknown_attacks = set(attacks) - set(ATTACK_LABELS)
+    if unknown_methods or unknown_attacks:
+        raise ValueError(
+            f"Unknown matrix entries: methods={sorted(unknown_methods)}, "
+            f"attacks={sorted(unknown_attacks)}")
+    return list(methods), list(attacks)
+
+
+def _activate_matrix(cfg: dict):
+    """Set plotting dimensions for this process from the selected config."""
+    global MAIN_METHODS, MAIN_ATTACKS, METHOD_STYLES
+    MAIN_METHODS, MAIN_ATTACKS = matrix_values(cfg)
+    METHOD_STYLES = {m: ('-' if m == 'sltrust' else '--') for m in MAIN_METHODS}
+
+
 def _run_dir(save_dir: Path, dataset: str, seed: int) -> Path:
     return save_dir / run_dir_name(dataset, seed)
 
@@ -99,6 +121,9 @@ def run_single_combo(config_path=None):
 
     seed = int(seed_str) if seed_str else cfg['experiment']['seed']
     cfg['experiment']['seed'] = seed
+    methods, attacks = matrix_values(cfg)
+    if method not in methods or attack_name not in attacks:
+        raise ValueError(f"Job ({method}, {attack_name}) is not in the configured matrix")
 
     dataset = cfg['data'].get('dataset', 'mnist').lower()
     save_dir = Path(__file__).parent.parent.parent / 'results'
@@ -109,11 +134,44 @@ def run_single_combo(config_path=None):
         return cached
 
     print(f"[{method} | {attack_name} | seed={seed}] Starting...")
+    from trainer import FederatedTrainer
     trainer = FederatedTrainer(cfg)
     history = trainer.train(method=method, attack_name=attack_name)
     save_result(out, history, cfg, 'main_table', method, attack_name)
     print(f"[{method} | {attack_name} | seed={seed}] Done -> {out}")
     return history
+
+
+def print_manifest(config_path=None):
+    """Enumerate the configured method-attack-seed matrix without training."""
+    if config_path is None:
+        config_path = Path(__file__).parent.parent.parent / 'configs' / 'main_table.yaml'
+    with open(config_path, 'r', encoding='utf-8') as f:
+        cfg = yaml.safe_load(f)
+    tasks = main_table_tasks(cfg)
+    print(f"dataset={cfg['data']['dataset']} unique_tasks={len(tasks)}")
+    for task in tasks:
+        print(task)
+    return tasks
+
+
+def run_configured_seeds(config_path=None):
+    """Run and plot every seed declared by a configured main-table matrix."""
+    if config_path is None:
+        config_path = Path(__file__).parent.parent.parent / 'configs' / 'main_table.yaml'
+    with open(config_path, 'r', encoding='utf-8') as f:
+        cfg = yaml.safe_load(f)
+    seeds = cfg.get('matrix', {}).get('seeds', [cfg['experiment']['seed']])
+    previous_seed = os.environ.get('MVP_SEED')
+    try:
+        for seed in seeds:
+            os.environ['MVP_SEED'] = str(int(seed))
+            run_main_table(config_path)
+    finally:
+        if previous_seed is None:
+            os.environ.pop('MVP_SEED', None)
+        else:
+            os.environ['MVP_SEED'] = previous_seed
 
 
 def run_main_table(config_path=None):
@@ -123,6 +181,7 @@ def run_main_table(config_path=None):
 
     with open(config_path, 'r', encoding='utf-8') as f:
         cfg = yaml.safe_load(f)
+    _activate_matrix(cfg)
 
     dataset = cfg['data'].get('dataset', 'mnist').lower()
     seed = int(os.environ.get('MVP_SEED', cfg['experiment']['seed']))
@@ -149,6 +208,7 @@ def run_main_table(config_path=None):
                 results[attack][method] = cached
             elif not plot_only:
                 print(f"[{method} | {attack} | seed={seed}] Starting...")
+                from trainer import FederatedTrainer
                 history = FederatedTrainer(cfg).train(method=method, attack_name=attack)
                 save_result(p, history, cfg, 'main_table', method, attack)
                 results[attack][method] = history

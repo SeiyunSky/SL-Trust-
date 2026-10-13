@@ -1,0 +1,126 @@
+# MNIST Non-IID pressure test
+
+experiment:
+  name: "sltrust_dfl_main_table"
+  seed: 42
+  device: "cuda"
+
+federated:
+  num_clients: 20
+  byzantine_ratio: 0.2
+  num_rounds: 100
+  local_epochs: 1
+  batch_size: 128
+
+data:
+  dataset: "mnist"
+  data_dir: "./data"
+  non_iid_alpha: 0.5
+  num_workers: 0
+
+model:
+  name: simple_cnn
+
+topology:
+  type: "mesh"
+  # 严格的无向正则图度数；需满足 n*degree 为偶数
+  degree: 6
+
+optimizer:
+  name: sgd
+  lr: 0.01
+  momentum: 0.0
+  weight_decay: 0.0
+  scheduler: none
+
+# 各方法超参
+fedavg:
+  alpha: 0.5
+
+sama:
+  alpha: 0.5
+
+contra:
+  alpha: 0.5
+  beta: 0.1
+
+contra_hard:
+  alpha: 0.5
+  beta: 0.1
+  threshold: 0.1
+
+sltrust:
+  alpha: 0.5
+  beta: 0.1
+  S: 3
+  L: 10
+
+sltrust_no_ratio:
+  alpha: 0.5
+  beta: 0.1
+  S: 3
+  L: 10
+
+sltrust_short_only:
+  alpha: 0.5
+  beta: 0.1
+  S: 3
+  L: 10
+
+sltrust_long_only:
+  alpha: 0.5
+  beta: 0.1
+  S: 3
+  L: 10
+
+krum:
+  alpha: 0.5
+  byzantine_ratio: 0.2
+
+trimmed_mean:
+  alpha: 0.5
+  trim_ratio: 0.1
+
+balance:
+  alpha: 0.5
+  gamma: 0.5
+  kappa: 0.1
+
+# 攻击超参
+attack:
+  none: {}
+  sign_flip:
+    scale: 1.0
+  gaussian:
+    # 相对于候选模型 RMS 的噪声倍数，不是参数坐标上的绝对标准差
+    std: 5.0
+  alie: {}
+  burn_in:
+    warmup_rounds: 40
+    scale: 1.0
+  oscillating:
+    period_attack: 10
+    period_rest: 15
+    scale: 1.0
+  slow_poison:
+    scale: 0.1
+  gradual_flip:
+    warmup_rounds: 40
+    ramp_rounds: 20
+    scale: 1.0
+  burn_in_slow:
+    warmup_rounds: 40
+    scale: 0.3
+  backdoor:
+    lambda_bd: 0.3
+
+stress:
+  dimension: non_iid
+  values: [0.1, 0.5, 1.0]
+  methods: [sama, contra, sltrust]
+  attacks: [none, burn_in, oscillating]
+  seeds: [42, 123, 456]
+
+logging:
+  log_interval: 5
+  save_dir: "./results"

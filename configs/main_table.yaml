@@ -17,6 +17,10 @@ data:
   dataset: "mnist"
   data_dir: "./data"
   non_iid_alpha: 0.5
+  num_workers: 0
+
+model:
+  name: simple_cnn
 
 topology:
   type: "mesh"
@@ -24,7 +28,11 @@ topology:
   degree: 6
 
 optimizer:
+  name: sgd
   lr: 0.01
+  momentum: 0.0
+  weight_decay: 0.0
+  scheduler: none
 
 # 各方法超参
 fedavg:

@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any
 
 
-RESULT_SCHEMA_VERSION = 2
-PROTOCOL = "candidate-model-v1"
+RESULT_SCHEMA_VERSION = 3
+PROTOCOL = "candidate-model-state-v3"
 _REQUIRED_SERIES = ("test_acc", "test_loss", "consensus_error", "tau_byz")
 _FINITE_SERIES = ("test_acc", "test_loss", "consensus_error")
 
@@ -21,7 +21,7 @@ def _canonical_json(value: Any) -> str:
 
 def _effective_config(cfg: dict, method: str, attack: str) -> dict:
     """Keep only configuration that can affect this concrete training job."""
-    common_keys = ("experiment", "federated", "data", "topology", "optimizer", "logging")
+    common_keys = ("experiment", "federated", "data", "model", "topology", "optimizer", "logging")
     effective = {key: cfg[key] for key in common_keys if key in cfg}
     if method in cfg:
         effective["method_config"] = cfg[method]

@@ -1,7 +1,10 @@
 import math
 import unittest
 
-import torch
+try:
+    import torch
+except ModuleNotFoundError as exc:
+    raise unittest.SkipTest("torch is not installed") from exc
 
 from aggregators.sltrust import SLTrustAggregator
 

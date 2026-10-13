@@ -29,6 +29,11 @@ def main():
                             'mvp_cifar10', 'mvp_cifar10_single', 'mvp_cifar10_plot',
                             'main_table', 'main_table_single', 'main_table_plot',
                             'main_table_cifar10', 'main_table_cifar10_single', 'main_table_cifar10_plot',
+                            'generalization_cifar100', 'generalization_cifar100_single', 'generalization_cifar100_plot',
+                            'generalization_cifar100_manifest',
+                            'stress_non_iid_single', 'stress_topology_single', 'stress_byzantine_ratio_single',
+                            'stress_non_iid_manifest', 'stress_topology_manifest', 'stress_byzantine_ratio_manifest',
+                            'stress_non_iid_plot', 'stress_topology_plot', 'stress_byzantine_ratio_plot',
                             'tau_mnist', 'tau_mnist_single', 'tau_cifar10', 'tau_cifar10_single',
                             'tau_decay_mnist', 'tau_decay_mnist_single',
                             'tau_decay_cifar10', 'tau_decay_cifar10_single',
@@ -40,12 +45,18 @@ def main():
                         help='单组合模式：指定方法（fedavg/sama/contra/sltrust）')
     parser.add_argument('--attack', type=str, default=None,
                         help='单组合模式：指定攻击（sign_flip/burn_in）')
+    parser.add_argument('--seed', type=int, default=None,
+                        help='覆盖单组合任务 seed')
+    parser.add_argument('--stress-value', type=str, default=None,
+                        help='压力测试值的 JSON，例如 0.1 或 {"type":"ring"}')
     args = parser.parse_args()
 
     sys.path.insert(0, PERF_PATH)
 
-    if args.experiment.startswith('main_table'):
+    if args.experiment.startswith(('main_table', 'generalization_cifar100')):
         module = importlib.import_module('main_table_experiment')
+    elif args.experiment.startswith('stress_'):
+        module = importlib.import_module('stress_experiment')
     elif args.experiment.startswith('tau_decay'):
         module = importlib.import_module('tau_decay_experiment')
     elif args.experiment.startswith('tau'):
@@ -57,13 +68,17 @@ def main():
     else:
         module = importlib.import_module('mvp_experiment')
 
-    cifar_main = Path(__file__).parent / 'configs' / 'main_table_cifar10.yaml'
+    config_dir = Path(__file__).parent / 'configs'
+    cifar_main = config_dir / 'main_table_cifar10.yaml'
+    cifar100_generalization = config_dir / 'generalization_cifar100.yaml'
     cifar_tau  = Path(__file__).parent / 'configs' / 'tau.yaml'   # tau 暂用 mnist config，cifar 版单独建
     cifar_abl  = Path(__file__).parent / 'configs' / 'ablation.yaml'
 
     def _set_env():
         if args.method: os.environ['MVP_METHOD'] = args.method
         if args.attack:  os.environ['MVP_ATTACK'] = args.attack
+        if args.seed is not None: os.environ['MVP_SEED'] = str(args.seed)
+        if args.stress_value is not None: os.environ['MVP_STRESS_VALUE'] = args.stress_value
 
     def _read_results(callable_, plot_only=False):
         previous_force = os.environ.get('MVP_FORCE')
@@ -111,6 +126,28 @@ def main():
         _set_env(); module.run_single_combo(config_path=cifar_main)
     elif args.experiment == 'main_table_cifar10_plot':
         _plot_only(lambda: module.run_main_table(config_path=cifar_main))
+    elif args.experiment == 'generalization_cifar100':
+        module.run_configured_seeds(config_path=cifar100_generalization)
+    elif args.experiment == 'generalization_cifar100_single':
+        _set_env(); module.run_single_combo(config_path=cifar100_generalization)
+    elif args.experiment == 'generalization_cifar100_plot':
+        _plot_only(lambda: module.run_main_table(config_path=cifar100_generalization))
+    elif args.experiment == 'generalization_cifar100_manifest':
+        module.print_manifest(config_path=cifar100_generalization)
+
+    elif args.experiment.startswith('stress_'):
+        dimension = (args.experiment.removeprefix('stress_')
+                     .removesuffix('_single').removesuffix('_manifest').removesuffix('_plot'))
+        config_path = config_dir / f'stress_{dimension}_mnist.yaml'
+        if args.experiment.endswith('_manifest'):
+            module.print_manifest(config_path)
+        elif args.experiment.endswith('_plot'):
+            module.run_summary(config_path)
+        else:
+            _set_env()
+            if not args.method or not args.attack or args.stress_value is None:
+                parser.error('stress single requires --method, --attack, and --stress-value')
+            module.run_single_combo(config_path)
 
     elif args.experiment == 'tau_mnist':
         _plot_only(module.run_tau_experiment) if os.environ.get('MVP_PLOT_ONLY') == '1' else module.run_tau_experiment()

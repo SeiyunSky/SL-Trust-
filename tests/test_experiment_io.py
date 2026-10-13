@@ -18,6 +18,7 @@ class ExperimentIOTest(unittest.TestCase):
             'experiment': {'seed': 42, 'device': 'cpu'},
             'federated': {'num_rounds': 10},
             'data': {'dataset': 'mnist'},
+            'model': {'name': 'simple_cnn'},
             'topology': {'type': 'mesh', 'degree': 6},
             'optimizer': {'lr': 0.01},
             'logging': {'log_interval': 2},
@@ -56,6 +57,22 @@ class ExperimentIOTest(unittest.TestCase):
         changed['attack']['gaussian']['std'] = 99.0
         after = result_identity(changed, 'main_table', 'sltrust', 'burn_in')
         self.assertEqual(before['fingerprint'], after['fingerprint'])
+
+    def test_model_change_invalidates_fingerprint(self):
+        before = result_identity(self.cfg, 'main_table', 'sltrust', 'burn_in')
+        changed = json.loads(json.dumps(self.cfg))
+        changed['model']['name'] = 'resnet18_cifar_bn'
+        after = result_identity(changed, 'main_table', 'sltrust', 'burn_in')
+        self.assertNotEqual(before['fingerprint'], after['fingerprint'])
+
+    def test_stress_extra_change_invalidates_fingerprint(self):
+        first = result_identity(
+            self.cfg, 'stress_non_iid', 'sltrust', 'burn_in',
+            {'dimension': 'non_iid', 'value': 0.1})
+        second = result_identity(
+            self.cfg, 'stress_non_iid', 'sltrust', 'burn_in',
+            {'dimension': 'non_iid', 'value': 0.5})
+        self.assertNotEqual(first['fingerprint'], second['fingerprint'])
 
     def test_active_method_or_attack_change_invalidates_fingerprint(self):
         before = result_identity(self.cfg, 'main_table', 'sltrust', 'burn_in')

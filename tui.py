@@ -97,9 +97,18 @@ EXPERIMENTS = {
         ]
     },
     'G': {
+        'label': '泛化与压力测试',
+        'items': [
+            ('G1', 'generalization_cifar100_parallel', 'CIFAR-100 精简泛化（4方法×4攻击×3 seeds）'),
+            ('G2', 'stress_non_iid_parallel', 'MNIST Non-IID 压力测试'),
+            ('G3', 'stress_topology_parallel', 'MNIST Topology 压力测试'),
+            ('G4', 'stress_byzantine_ratio_parallel', 'MNIST Byzantine ratio 压力测试'),
+        ]
+    },
+    'H': {
         'label': '一键全部论文实验',
         'items': [
-            ('G1', 'paper_all', '选实验类型+数据集+轮数，统一并行调度'),
+            ('H1', 'paper_all', '选实验类型+数据集+轮数，统一并行调度'),
         ]
     },
 }
@@ -806,8 +815,55 @@ def main():
             console.print(render_results_table())
             continue
 
-        # ── 一键全部论文实验 G1 ───────────────────────────────
-        if choice.upper() in ('G1', 'PAPER_ALL'):
+        # ── CIFAR-100 精简泛化（固定 YAML 矩阵）────────────────
+        if choice.upper() in ('G1', 'GENERALIZATION_CIFAR100_PARALLEL'):
+            import yaml
+            from experiment_matrix import main_table_tasks
+            cfg_path = PROJ_DIR / 'configs' / 'generalization_cifar100.yaml'
+            with open(cfg_path, encoding='utf-8') as f:
+                tasks = main_table_tasks(yaml.safe_load(f))
+            jobs = [ExperimentRunner(
+                'generalization_cifar100_single',
+                f"cifar100|s{task['seed']}|{task['method']}|{task['attack']}",
+                extra_env={'MVP_METHOD': task['method'], 'MVP_ATTACK': task['attack'],
+                           'MVP_SEED': str(task['seed'])}) for task in tasks]
+            console.print(f"[bold cyan]配置矩阵共 {len(jobs)} 个 job。[/bold cyan]")
+            if not run_parallel(jobs):
+                console.print("[red]存在失败任务，已跳过 CIFAR-100 出图。[/red]")
+                continue
+            for seed in sorted({task['seed'] for task in tasks}):
+                run_single('generalization_cifar100_plot',
+                           f'CIFAR-100 seed={seed} 出图', {'MVP_SEED': str(seed)})
+            continue
+
+        # ── MNIST 压力测试（固定 YAML 矩阵）────────────────────
+        stress_choices = {
+            'G2': 'non_iid', 'STRESS_NON_IID_PARALLEL': 'non_iid',
+            'G3': 'topology', 'STRESS_TOPOLOGY_PARALLEL': 'topology',
+            'G4': 'byzantine_ratio', 'STRESS_BYZANTINE_RATIO_PARALLEL': 'byzantine_ratio',
+        }
+        if choice.upper() in stress_choices:
+            import yaml
+            from experiment_matrix import encode_value, stress_tasks
+            dimension = stress_choices[choice.upper()]
+            cfg_path = PROJ_DIR / 'configs' / f'stress_{dimension}_mnist.yaml'
+            with open(cfg_path, encoding='utf-8') as f:
+                tasks = stress_tasks(yaml.safe_load(f))
+            jobs = [ExperimentRunner(
+                f'stress_{dimension}_single',
+                f"{dimension}|s{task['seed']}|{task['method']}|{task['attack']}|{task['value']}",
+                extra_env={'MVP_METHOD': task['method'], 'MVP_ATTACK': task['attack'],
+                           'MVP_SEED': str(task['seed']),
+                           'MVP_STRESS_VALUE': encode_value(task['value'])}) for task in tasks]
+            console.print(f"[bold cyan]配置矩阵共 {len(jobs)} 个 job。[/bold cyan]")
+            if not run_parallel(jobs):
+                console.print("[red]存在失败任务，已跳过压力测试汇总图。[/red]")
+                continue
+            run_single(f'stress_{dimension}_plot', f'{dimension} 压力测试汇总图')
+            continue
+
+        # ── 一键全部论文实验 H1 ───────────────────────────────
+        if choice.upper() in ('H1', 'PAPER_ALL'):
             from experiments.performance.ablation_experiment import ABLATION_METHODS, ABLATION_ATTACKS
             MAIN_METHODS = [k for k, _ in ALL_METHODS]
             MAIN_ATTACKS = [k for k, _ in ALL_ATTACKS]

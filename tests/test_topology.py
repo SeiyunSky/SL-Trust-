@@ -34,6 +34,17 @@ class TopologyTest(unittest.TestCase):
             for neighbor in neighbors:
                 self.assertIn(node, first[neighbor])
 
+    def test_explicit_seed_reproduces_regular_and_small_world_graphs(self):
+        from utils.topology import generate_mesh_topology, generate_small_world_topology
+
+        self.assertEqual(
+            generate_mesh_topology(20, degree=6, seed=123),
+            generate_mesh_topology(20, degree=6, seed=123))
+        first = generate_small_world_topology(20, degree=6, rewire_prob=0.2, seed=123)
+        second = generate_small_world_topology(20, degree=6, rewire_prob=0.2, seed=123)
+        self.assertEqual(first, second)
+        self.assertTrue(all(first))
+
     def test_mesh_rejects_impossible_regular_graph(self):
         from utils.topology import generate_mesh_topology
 
@@ -56,18 +67,18 @@ class TopologyTest(unittest.TestCase):
         }
         seen = {}
 
-        def fake_loader(**kwargs):
+        def fake_loader(config, device):
             seen['loader_numpy'] = int(np.random.randint(1_000_000))
             seen['loader_torch'] = int(torch.randint(1_000_000, (1,)).item())
-            return [object()] * 4, object()
+            return [object()] * 4, object(), {'in_channels': 1, 'num_classes': 10}
 
-        def fake_topology(n, degree):
+        def fake_topology(config, n, seed):
             seen['topology_numpy'] = int(np.random.randint(1_000_000))
+            seen['topology_seed'] = seed
             return [[1, 3], [0, 2], [1, 3], [0, 2]]
 
-        with patch.object(trainer, 'load_mnist', side_effect=fake_loader), \
-             patch.object(trainer, 'generate_mesh_topology', side_effect=fake_topology), \
-             patch.object(trainer.torch.cuda, 'is_available', return_value=False):
+        with patch.object(trainer, 'load_federated_dataset', side_effect=fake_loader), \
+             patch.object(trainer, 'generate_topology', side_effect=fake_topology):
             trainer.FederatedTrainer(cfg)
             first = dict(seen)
             trainer.FederatedTrainer(cfg)

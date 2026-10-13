@@ -1,6 +1,9 @@
 import unittest
 
-import torch
+try:
+    import torch
+except ModuleNotFoundError as exc:
+    raise unittest.SkipTest("torch is not installed") from exc
 
 from aggregators.fedavg import FedAvgAggregator
 from aggregators.krum import KrumAggregator
@@ -10,6 +13,29 @@ from attacks import GaussianAttack, SignFlipAttack
 
 
 class ModelProtocolTest(unittest.TestCase):
+    def test_complete_state_vector_roundtrip_includes_batchnorm_buffers(self):
+        from models.resnet_cifar import CIFARResNet18
+
+        source = CIFARResNet18(num_classes=10)
+        source.train()
+        source(torch.randn(4, 3, 32, 32))
+        vector = FedAvgAggregator.model_to_vector(source)
+        target = CIFARResNet18(num_classes=10)
+        FedAvgAggregator.load_from_vector(target, vector)
+
+        for key, tensor in source.state_dict().items():
+            torch.testing.assert_close(tensor, target.state_dict()[key])
+
+    def test_batchnorm_state_projection_keeps_attacked_state_valid(self):
+        from models.resnet_cifar import CIFARResNet18
+
+        model = CIFARResNet18(num_classes=10)
+        vector = FedAvgAggregator.model_to_vector(model)
+        FedAvgAggregator.load_from_vector(model, -vector)
+        for key, tensor in model.state_dict().items():
+            if key.endswith('running_var') or key.endswith('num_batches_tracked'):
+                self.assertTrue(torch.all(tensor >= 0), key)
+
     def test_candidate_model_is_written_back_directly(self):
         own_model = torch.tensor([100.0, 100.0])
         neighbor_model = torch.tensor([102.0, 98.0])
@@ -49,14 +75,14 @@ class ModelProtocolTest(unittest.TestCase):
 
         torch.testing.assert_close(malicious_model, torch.tensor([-101.0, -98.0]))
 
-    def test_malicious_broadcast_does_not_replace_internal_candidate(self):
-        candidate_model = torch.tensor([101.0, 98.0])
-        broadcasts = [candidate_model]
+    def test_malicious_candidate_is_written_back_as_internal_state(self):
+        internal_model = torch.tensor([101.0, 98.0])
 
-        broadcasts[0] = SignFlipAttack().attack(candidate_model)
+        malicious_candidate = SignFlipAttack().attack(internal_model)
+        next_internal_model = malicious_candidate
 
-        torch.testing.assert_close(candidate_model, torch.tensor([101.0, 98.0]))
-        torch.testing.assert_close(broadcasts[0], torch.tensor([-101.0, -98.0]))
+        torch.testing.assert_close(malicious_candidate, torch.tensor([-101.0, -98.0]))
+        torch.testing.assert_close(next_internal_model, malicious_candidate)
 
     def test_gaussian_noise_is_scaled_by_candidate_model_rms(self):
         candidate_model = torch.full((100,), 0.01)

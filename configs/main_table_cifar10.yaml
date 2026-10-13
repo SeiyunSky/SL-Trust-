@@ -17,6 +17,11 @@ data:
   dataset: "cifar10"
   data_dir: "./data"
   non_iid_alpha: 0.5
+  augmentation: standard
+  num_workers: 4
+
+model:
+  name: resnet18_cifar_bn
 
 topology:
   type: "mesh"
@@ -24,7 +29,11 @@ topology:
   degree: 6
 
 optimizer:
-  lr: 0.01
+  name: sgd
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 0.0005
+  scheduler: cosine
 
 # 各方法超参
 fedavg:

@@ -11,6 +11,10 @@ _DATASET_MARKERS = {
         'cifar-10-batches-py/data_batch_1',
         'cifar-10-batches-py/test_batch',
     ],
+    'cifar100': [
+        'cifar-100-python/train',
+        'cifar-100-python/test',
+    ],
 }
 
 
@@ -44,5 +48,8 @@ def download_dataset(name: str, data_dir: str = './data') -> None:
     elif name == 'cifar10':
         datasets.CIFAR10(data_dir, train=True, download=True, transform=transform)
         datasets.CIFAR10(data_dir, train=False, download=True, transform=transform)
+    elif name == 'cifar100':
+        datasets.CIFAR100(data_dir, train=True, download=True, transform=transform)
+        datasets.CIFAR100(data_dir, train=False, download=True, transform=transform)
     else:
         raise ValueError(f"Unknown dataset: {name}")

@@ -22,7 +22,7 @@ def generate_ring_topology(n):
     return neighbors
 
 
-def generate_mesh_topology(n, degree=4):
+def generate_mesh_topology(n, degree=4, seed=None):
     """生成无向随机正则拓扑，使每个节点严格具有 ``degree`` 个邻居。"""
     if n < 2:
         return [[] for _ in range(n)]
@@ -33,9 +33,36 @@ def generate_mesh_topology(n, degree=4):
 
     # networkx 使用独立的整数 seed；该整数由调用方设置好的 NumPy RNG
     # 产生，因此同一实验 seed 可复现，同时不依赖 networkx 的全局状态。
-    graph_seed = int(np.random.randint(0, 2**32 - 1))
+    graph_seed = int(np.random.randint(0, 2**32 - 1)) if seed is None else int(seed)
     graph = nx.random_regular_graph(degree, n, seed=graph_seed)
     return [sorted(graph.neighbors(i)) for i in range(n)]
+
+
+def generate_small_world_topology(n, degree=4, rewire_prob=0.2, seed=None):
+    """Generate a connected Watts--Strogatz small-world topology."""
+    if not 0 < degree < n or degree % 2:
+        raise ValueError(f"small-world degree must be even and satisfy 0 < degree < n, got {degree}")
+    if not 0.0 <= rewire_prob <= 1.0:
+        raise ValueError(f"rewire_prob must be in [0, 1], got {rewire_prob}")
+    graph_seed = int(np.random.randint(0, 2**32 - 1)) if seed is None else int(seed)
+    graph = nx.connected_watts_strogatz_graph(
+        n, degree, rewire_prob, tries=100, seed=graph_seed)
+    return [sorted(graph.neighbors(i)) for i in range(n)]
+
+
+def generate_topology(config: dict, num_clients: int, seed: int):
+    """Build one configured topology with explicit seed-based reproducibility."""
+    topo = config['topology']
+    kind = topo['type'].lower()
+    if kind == 'ring':
+        return generate_ring_topology(num_clients)
+    if kind in {'mesh', 'regular'}:
+        return generate_mesh_topology(num_clients, degree=topo.get('degree', 4), seed=seed)
+    if kind == 'small_world':
+        return generate_small_world_topology(
+            num_clients, degree=topo.get('degree', 4),
+            rewire_prob=topo.get('rewire_prob', 0.2), seed=seed)
+    raise ValueError(f"Unknown topology: {kind}")
 
 
 def generate_erdos_renyi_topology(n, p=0.3):

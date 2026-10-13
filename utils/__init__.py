@@ -6,10 +6,12 @@ from .datasets import check_dataset, check_all_datasets, download_dataset
 
 _DATA_LOADER_EXPORTS = {
     'load_mnist', 'load_mnist_gpu', 'load_cifar10', 'load_cifar10_gpu',
-    'dirichlet_partition', 'GPUTensorLoader',
+    'load_cifar100', 'load_federated_dataset', 'dirichlet_partition', 'GPUTensorLoader',
 }
+_OPTIM_EXPORTS = {'build_optimizer', 'build_scheduler'}
 _TOPOLOGY_EXPORTS = {
-    'generate_ring_topology', 'generate_mesh_topology', 'check_connectivity',
+    'generate_ring_topology', 'generate_mesh_topology', 'generate_small_world_topology',
+    'generate_topology', 'check_connectivity',
 }
 
 
@@ -18,6 +20,9 @@ def __getattr__(name):
     if name in _DATA_LOADER_EXPORTS:
         from . import data_loader
         return getattr(data_loader, name)
+    if name in _OPTIM_EXPORTS:
+        from . import optim
+        return getattr(optim, name)
     if name in _TOPOLOGY_EXPORTS:
         from . import topology
         return getattr(topology, name)
@@ -56,5 +61,5 @@ def get_result_dir(base_dir, dataset: str, category: str, sub: str = '',
 __all__ = [
     'check_dataset', 'check_all_datasets', 'download_dataset',
     'get_result_dir', 'run_dir_name',
-    *_DATA_LOADER_EXPORTS, *_TOPOLOGY_EXPORTS,
+    *_DATA_LOADER_EXPORTS, *_OPTIM_EXPORTS, *_TOPOLOGY_EXPORTS,
 ]

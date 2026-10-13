@@ -10,9 +10,10 @@ import numpy as np
 import yaml
 from pathlib import Path
 
-from models import SimpleCNN
-from utils.data_loader import load_mnist_gpu, load_mnist, load_cifar10_gpu, load_cifar10
-from utils.topology import generate_ring_topology, generate_mesh_topology
+from models.factory import build_model
+from utils.data_loader import load_federated_dataset
+from utils.topology import generate_topology
+from utils.optim import build_optimizer, build_scheduler
 from aggregators import (FedAvgAggregator, KrumAggregator, TrimmedMeanAggregator,
                          BALANCEAggregator, SAMAAggregator, CONTRAAggregator,
                          CONTRAHardAggregator, SLTrustAggregator)
@@ -139,43 +140,14 @@ class FederatedTrainer:
         self.num_clients = num_clients
         self.num_byzantine = num_byzantine
 
-        # 数据
-        data_dir = config['data']['data_dir']
-        dataset = config['data'].get('dataset', 'mnist').lower()
-        alpha = config['data']['non_iid_alpha']
-        batch_size = config['federated']['batch_size']
+        # 数据与拓扑均由配置驱动；同一 seed 固定 partition 和 graph realization。
+        self.train_loaders, self.test_loader, dataset_spec = load_federated_dataset(
+            config, self.device)
+        self._in_channels = dataset_spec['in_channels']
+        self._num_classes = dataset_spec['num_classes']
 
-        use_gpu_loader = torch.cuda.is_available()
-        if dataset == 'cifar10':
-            in_channels, num_classes = 3, 10
-            if use_gpu_loader:
-                self.train_loaders, self.test_loader = load_cifar10_gpu(
-                    data_dir=data_dir, num_clients=num_clients,
-                    alpha=alpha, batch_size=batch_size, device=str(self.device))
-            else:
-                self.train_loaders, self.test_loader = load_cifar10(
-                    data_dir=data_dir, num_clients=num_clients,
-                    alpha=alpha, batch_size=batch_size, num_workers=0)
-        else:  # mnist
-            in_channels, num_classes = 1, 10
-            if use_gpu_loader:
-                self.train_loaders, self.test_loader = load_mnist_gpu(
-                    data_dir=data_dir, num_clients=num_clients,
-                    alpha=alpha, batch_size=batch_size, device=str(self.device))
-            else:
-                self.train_loaders, self.test_loader = load_mnist(
-                    data_dir=data_dir, num_clients=num_clients,
-                    alpha=alpha, batch_size=batch_size, num_workers=0)
-        self._in_channels = in_channels
-        self._num_classes = num_classes
-
-        # 拓扑
         topo = config['topology']['type']
-        if topo == 'ring':
-            self.neighbors = generate_ring_topology(num_clients)
-        else:
-            self.neighbors = generate_mesh_topology(
-                num_clients, degree=config['topology'].get('degree', 4))
+        self.neighbors = generate_topology(config, num_clients, seed)
 
         print(f"Device: {self.device}  "
               f"Honest: {len(self.honest_nodes)}  Byzantine: {num_byzantine}  "
@@ -208,60 +180,63 @@ class FederatedTrainer:
                              self.num_clients, self.num_byzantine)
 
         # 所有客户端从同一初始模型出发；随后各自维护独立参数和优化器状态。
-        initial_model = SimpleCNN(num_classes=self._num_classes,
-                                  in_channels=self._in_channels).to(self.device)
+        initial_model = build_model(
+            self.cfg, self._in_channels, self._num_classes).to(self.device)
         models = [copy.deepcopy(initial_model) for _ in range(self.num_clients)]
         del initial_model
-        lr = self.cfg['optimizer']['lr']
-        optimizers = [torch.optim.SGD(m.parameters(), lr=lr) for m in models]
-        eval_model = SimpleCNN(num_classes=self._num_classes,
-                               in_channels=self._in_channels).to(self.device)
+        optimizers = [build_optimizer(m.parameters(), self.cfg) for m in models]
+        eval_model = build_model(
+            self.cfg, self._in_channels, self._num_classes).to(self.device)
 
         num_rounds = self.cfg['federated']['num_rounds']
         local_epochs = self.cfg['federated']['local_epochs']
         log_interval = self.cfg['logging']['log_interval']
+        schedulers = [scheduler for scheduler in (
+            build_scheduler(optimizer, self.cfg) for optimizer in optimizers)
+            if scheduler is not None]
 
         history = {'test_acc': [], 'test_loss': [], 'consensus_error': [],
                    'tau_byz': []}   # 平均 τ (byzantine neighbors) per log step，仅信誉方法有值
 
         for t in range(num_rounds):
-            # SAMA model-space backbone：每个节点先完成本地训练，随后广播候选模型
-            # w_i^{t,+}。SLTrust 的相似度、信誉、幅度对齐和聚合均作用于候选模型。
+            # NoAttack 时所有节点训练；存在攻击时仅诚实节点执行本地训练，
+            # Byzantine 节点保留上一轮模型状态供攻击函数改写。
             local_models = []
             for i in range(self.num_clients):
                 m = models[i]
-                m.train()
-                for _ in range(local_epochs):
-                    for data, target in self.train_loaders[i]:
-                        data = data.to(self.device, non_blocking=True)
-                        target = target.to(self.device, non_blocking=True)
-                        optimizers[i].zero_grad()
-                        loss = torch.nn.functional.cross_entropy(m(data), target)
-                        loss.backward()
-                        optimizers[i].step()
+                is_training_node = i in self.honest_nodes or isinstance(attack, NoAttack)
+                if is_training_node:
+                    m.train()
+                    for _ in range(local_epochs):
+                        for data, target in self.train_loaders[i]:
+                            data = data.to(self.device, non_blocking=True)
+                            target = target.to(self.device, non_blocking=True)
+                            optimizers[i].zero_grad()
+                            loss = torch.nn.functional.cross_entropy(m(data), target)
+                            loss.backward()
+                            optimizers[i].step()
                 local_models.append(aggregator.model_to_vector(m).clone())
 
-            # 恶意消息只替换 Byzantine 节点的广播候选模型，不覆盖其内部本地模型。
-            broadcast_models = list(local_models)
+            # 攻击直接改写 Byzantine 候选模型。该模型既作为本轮广播，
+            # 也在本轮结束时成为该节点下一轮的模型状态。
             if isinstance(attack, ALIEAttack):
                 honest_models = [local_models[i] for i in self.honest_nodes]
                 malicious_model = attack.attack(honest_models)
                 for byz_id in self.byzantine_nodes:
-                    broadcast_models[byz_id] = malicious_model
+                    local_models[byz_id] = malicious_model.clone()
             elif not isinstance(attack, NoAttack):
                 for byz_id in self.byzantine_nodes:
-                    broadcast_models[byz_id] = attack.attack(
-                        local_models[byz_id], t=t)
+                    local_models[byz_id] = attack.attack(local_models[byz_id], t=t)
 
-            # 拒绝非有限广播，避免单个 NaN/Inf 污染整个邻域。
-            for sender_id, broadcast_model in enumerate(broadcast_models):
-                if not torch.isfinite(broadcast_model).all():
+            # 拒绝非有限候选模型，避免单个 NaN/Inf 污染整个邻域。
+            for sender_id, candidate_model in enumerate(local_models):
+                if not torch.isfinite(candidate_model).all():
                     raise ValueError(
                         f"Non-finite candidate model broadcast by client {sender_id} at round {t + 1}")
 
             # 去中心化候选模型聚合。aggregate() 只处理邻居模型，final_update()
             # 在本地候选模型与邻居聚合模型之间执行一次 self-anchor 插值。
-            all_models = torch.stack(broadcast_models)
+            all_models = torch.stack(local_models)
             updated_model_vecs = []
             for i in range(self.num_clients):
                 own_model = local_models[i]
@@ -287,6 +262,8 @@ class FederatedTrainer:
 
             for i, model_vec in enumerate(updated_model_vecs):
                 aggregator.load_from_vector(models[i], model_vec)
+            for scheduler in schedulers:
+                scheduler.step()
 
             # ── 评估 ──────────────────────────────────────
             if (t + 1) % log_interval == 0:

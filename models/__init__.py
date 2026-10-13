@@ -22,3 +22,8 @@ class SimpleCNN(nn.Module):
         x = x.view(-1, self._fc1_in)
         x = F.relu(self.fc1(x))
         return self.fc2(x)
+
+
+from .resnet_cifar import CIFARResNet18
+
+__all__ = ['SimpleCNN', 'CIFARResNet18']

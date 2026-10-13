@@ -3,7 +3,6 @@ Data loading utilities with Non-IID partitioning
 """
 import numpy as np
 import torch
-from pathlib import Path
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, Subset
 
@@ -41,49 +40,6 @@ class GPUTensorLoader:
             yield self.data[idx], self.targets[idx]
 
 
-# ──────────────────────────────────────────────────────────
-# 数据集检测与下载
-# ──────────────────────────────────────────────────────────
-
-# 每个数据集在 data_dir 下预期存在的标志文件/目录
-_DATASET_MARKERS = {
-    'mnist': [
-        'MNIST/raw/train-images-idx3-ubyte',
-        'MNIST/raw/t10k-images-idx3-ubyte',
-    ],
-    'cifar10': [
-        'cifar-10-batches-py/data_batch_1',
-        'cifar-10-batches-py/test_batch',
-    ],
-}
-
-
-def check_dataset(name: str, data_dir: str = './data') -> bool:
-    """检查数据集是否已下载完整，返回 True/False"""
-    root = Path(data_dir)
-    markers = _DATASET_MARKERS.get(name.lower(), [])
-    return all((root / m).exists() for m in markers)
-
-
-def check_all_datasets(data_dir: str = './data') -> dict:
-    """返回 {dataset_name: bool} 的完整状态字典"""
-    return {name: check_dataset(name, data_dir) for name in _DATASET_MARKERS}
-
-
-def download_dataset(name: str, data_dir: str = './data'):
-    """下载指定数据集（仅下载，不做划分）"""
-    name = name.lower()
-    transform = transforms.ToTensor()
-    if name == 'mnist':
-        datasets.MNIST(data_dir, train=True, download=True, transform=transform)
-        datasets.MNIST(data_dir, train=False, download=True, transform=transform)
-    elif name == 'cifar10':
-        datasets.CIFAR10(data_dir, train=True, download=True, transform=transform)
-        datasets.CIFAR10(data_dir, train=False, download=True, transform=transform)
-    else:
-        raise ValueError(f"Unknown dataset: {name}")
-
-
 
 def dirichlet_partition(dataset, num_clients, alpha=0.1, num_classes=10):
     """
@@ -98,29 +54,27 @@ def dirichlet_partition(dataset, num_clients, alpha=0.1, num_classes=10):
     返回:
         List[List[int]] - 每个客户端的数据索引
     """
-    # 按类别组织数据索引
+    if alpha <= 0:
+        raise ValueError(f"Dirichlet alpha must be positive, got {alpha}")
     labels = np.array(dataset.targets)
     class_indices = [np.where(labels == c)[0] for c in range(num_classes)]
 
-    # 为每个客户端分配数据
-    client_indices = [[] for _ in range(num_clients)]
-
-    for c_idx in class_indices:
-        # 生成Dirichlet分布
-        proportions = np.random.dirichlet([alpha] * num_clients)
-
-        # 根据比例分配数据
-        split_points = (np.cumsum(proportions) * len(c_idx)).astype(int)[:-1]
-        splits = np.split(c_idx, split_points)
-
-        for client_id, split in enumerate(splits):
-            client_indices[client_id].extend(split.tolist())
-
-    # 打乱每个客户端的数据
-    for indices in client_indices:
-        np.random.shuffle(indices)
-
-    return client_indices
+    # Resample from the seeded NumPy stream instead of duplicating sample 0.
+    for _ in range(1000):
+        client_indices = [[] for _ in range(num_clients)]
+        for c_idx in class_indices:
+            shuffled = np.random.permutation(c_idx)
+            proportions = np.random.dirichlet([alpha] * num_clients)
+            split_points = (np.cumsum(proportions) * len(shuffled)).astype(int)[:-1]
+            for client_id, split in enumerate(np.split(shuffled, split_points)):
+                client_indices[client_id].extend(split.tolist())
+        if all(client_indices):
+            for indices in client_indices:
+                np.random.shuffle(indices)
+            return client_indices
+    raise RuntimeError(
+        f"Unable to create a non-empty Dirichlet partition after 1000 attempts: "
+        f"clients={num_clients}, alpha={alpha}, classes={num_classes}")
 
 
 def load_mnist(data_dir='./data', num_clients=20, alpha=0.1, batch_size=32, num_workers=4):
@@ -148,11 +102,6 @@ def load_mnist(data_dir='./data', num_clients=20, alpha=0.1, batch_size=32, num_
     # 创建每个客户端的DataLoader
     train_loaders = []
     for i, indices in enumerate(client_indices):
-        # 检查是否为空，如果为空则分配至少1个样本
-        if len(indices) == 0:
-            print(f"Warning: Client {i} has 0 samples, assigning 1 sample")
-            indices = [0]  # 分配第一个样本
-
         subset = Subset(train_dataset, indices)
         loader = DataLoader(
             subset,
@@ -179,39 +128,31 @@ def load_mnist(data_dir='./data', num_clients=20, alpha=0.1, batch_size=32, num_
     return train_loaders, test_loader
 
 
-def load_cifar10(data_dir='./data', num_clients=20, alpha=0.1, batch_size=32, num_workers=4):
-    """
-    加载CIFAR-10数据集并进行Non-IID划分
-
-    参数:
-        num_workers: 数据加载工作进程数
-    """
-    transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-    ])
-
+def _load_cifar(dataset_cls, num_classes, mean, std, data_dir='./data',
+                num_clients=20, alpha=0.1, batch_size=32, num_workers=4,
+                augmentation=True):
+    """Shared CIFAR-10/100 loader with deterministic partitioning and train augmentation."""
+    train_steps = []
+    if augmentation:
+        train_steps.extend([
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+        ])
+    train_steps.extend([transforms.ToTensor(), transforms.Normalize(mean, std)])
+    transform_train = transforms.Compose(train_steps)
     transform_test = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        transforms.Normalize(mean, std),
     ])
 
-    train_dataset = datasets.CIFAR10(data_dir, train=True, download=False, transform=transform_train)
-    test_dataset = datasets.CIFAR10(data_dir, train=False, download=False, transform=transform_test)
-
-    # Non-IID划分
-    client_indices = dirichlet_partition(train_dataset, num_clients, alpha=alpha, num_classes=10)
+    train_dataset = dataset_cls(data_dir, train=True, download=False, transform=transform_train)
+    test_dataset = dataset_cls(data_dir, train=False, download=False, transform=transform_test)
+    client_indices = dirichlet_partition(
+        train_dataset, num_clients, alpha=alpha, num_classes=num_classes)
 
     # 创建DataLoader
     train_loaders = []
     for i, indices in enumerate(client_indices):
-        # 检查是否为空，如果为空则分配至少1个样本
-        if len(indices) == 0:
-            print(f"Warning: Client {i} has 0 samples, assigning 1 sample")
-            indices = [0]  # 分配第一个样本
-
         subset = Subset(train_dataset, indices)
         loader = DataLoader(
             subset,
@@ -237,8 +178,60 @@ def load_cifar10(data_dir='./data', num_clients=20, alpha=0.1, batch_size=32, nu
     return train_loaders, test_loader
 
 
+def load_cifar10(data_dir='./data', num_clients=20, alpha=0.1, batch_size=32,
+                 num_workers=4, augmentation=True):
+    return _load_cifar(
+        datasets.CIFAR10, 10,
+        (0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616),
+        data_dir, num_clients, alpha, batch_size, num_workers, augmentation)
+
+
+def load_cifar100(data_dir='./data', num_clients=20, alpha=0.1, batch_size=32,
+                  num_workers=4, augmentation=True):
+    return _load_cifar(
+        datasets.CIFAR100, 100,
+        (0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761),
+        data_dir, num_clients, alpha, batch_size, num_workers, augmentation)
+
+
+_DATASET_SPECS = {
+    'mnist': {'in_channels': 1, 'num_classes': 10},
+    'cifar10': {'in_channels': 3, 'num_classes': 10},
+    'cifar100': {'in_channels': 3, 'num_classes': 100},
+}
+
+
+def load_federated_dataset(config: dict, device):
+    """Load one configured dataset and return loaders plus model dimensions."""
+    data_cfg = config['data']
+    fed_cfg = config['federated']
+    name = data_cfg.get('dataset', 'mnist').lower()
+    if name not in _DATASET_SPECS:
+        raise ValueError(f"Unknown dataset: {name}")
+    kwargs = {
+        'data_dir': data_cfg['data_dir'],
+        'num_clients': fed_cfg['num_clients'],
+        'alpha': data_cfg['non_iid_alpha'],
+        'batch_size': fed_cfg['batch_size'],
+    }
+    if name == 'mnist':
+        if device.type == 'cuda':
+            loaders = load_mnist_gpu(device=str(device), **kwargs)
+        else:
+            loaders = load_mnist(num_workers=data_cfg.get('num_workers', 0), **kwargs)
+    else:
+        # Standard stochastic CIFAR augmentation is kept in torchvision's CPU loader.
+        loader = load_cifar10 if name == 'cifar10' else load_cifar100
+        loaders = loader(
+            num_workers=data_cfg.get('num_workers', 4),
+            augmentation=data_cfg.get('augmentation', 'standard') == 'standard',
+            **kwargs)
+    spec = _DATASET_SPECS[name]
+    return loaders[0], loaders[1], spec
+
+
 # ──────────────────────────────────────────────────────────
-# GPU 预加载版（推荐，比 CPU DataLoader 快 5-10x）
+# GPU 预加载版（MNIST 推荐；CIFAR 正式实验使用标准增强的 CPU loader）
 # ──────────────────────────────────────────────────────────
 
 def _materialize_dataset_to_tensors(dataset, normalize_mean, normalize_std):

@@ -1,0 +1,120 @@
+# CIFAR-100 精简泛化矩阵：4 methods × 4 attacks × 3 seeds
+
+experiment:
+  name: "sltrust_dfl_generalization_cifar100"
+  seed: 42
+  device: "cuda"
+
+federated:
+  num_clients: 20
+  byzantine_ratio: 0.2
+  num_rounds: 300
+  local_epochs: 1
+  batch_size: 128
+
+data:
+  dataset: "cifar100"
+  data_dir: "./data"
+  non_iid_alpha: 0.5
+  augmentation: standard
+  num_workers: 4
+
+model:
+  name: resnet18_cifar_bn
+
+topology:
+  type: "mesh"
+  # 严格的无向正则图度数；需满足 n*degree 为偶数
+  degree: 6
+
+optimizer:
+  name: sgd
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 0.0005
+  scheduler: cosine
+
+# 各方法超参
+fedavg:
+  alpha: 0.5
+
+sama:
+  alpha: 0.5
+
+contra:
+  alpha: 0.5
+  beta: 0.1
+
+sltrust:
+  alpha: 0.5
+  beta: 0.1
+  S: 3
+  L: 10
+
+sltrust_no_ratio:
+  alpha: 0.5
+  beta: 0.1
+  S: 3
+  L: 10
+
+sltrust_short_only:
+  alpha: 0.5
+  beta: 0.1
+  S: 3
+  L: 10
+
+sltrust_long_only:
+  alpha: 0.5
+  beta: 0.1
+  S: 3
+  L: 10
+
+krum:
+  alpha: 0.5
+  byzantine_ratio: 0.2
+
+trimmed_mean:
+  alpha: 0.5
+  trim_ratio: 0.1
+
+balance:
+  alpha: 0.5
+  gamma: 2.0
+  kappa: 0.01
+
+# 攻击超参
+attack:
+  none: {}
+  sign_flip:
+    scale: 1.0
+  gaussian:
+    # 相对于候选模型 RMS 的噪声倍数，不是参数坐标上的绝对标准差
+    std: 5.0
+  alie: {}
+  burn_in:
+    warmup_rounds: 40
+    scale: 1.0
+  oscillating:
+    period_attack: 10
+    period_rest: 15
+    scale: 1.0
+  slow_poison:
+    scale: 0.1
+  gradual_flip:
+    warmup_rounds: 40
+    ramp_rounds: 20
+    scale: 1.0
+  burn_in_slow:
+    warmup_rounds: 40
+    scale: 0.3
+  backdoor:
+    lambda_bd: 0.3
+
+matrix:
+  methods: [fedavg, sama, contra, sltrust]
+  attacks: [none, gaussian, burn_in, oscillating]
+  seeds: [42, 123, 456]
+
+logging:
+  log_interval: 5
+  save_dir: "./results"
