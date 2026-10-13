@@ -1,0 +1,20 @@
+# Full runtime dependencies for AutoDL
+# AutoDL images often provide a CUDA-enabled torch build already. pip will keep it
+# when it satisfies these minimum versions; otherwise install a CUDA-compatible
+# torch/torchvision pair from the official PyTorch index first.
+
+# Training and datasets
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Numerical computation, attacks, and topology
+numpy>=1.24.0
+scipy>=1.10.0
+networkx>=3.0
+
+# YAML configuration and experiment visualization
+PyYAML>=6.0
+matplotlib>=3.7.0
+
+# Interactive experiment dashboard (tui.py)
+rich>=13.0.0
