@@ -63,7 +63,13 @@ class CONTRAHardAggregator(BaseAggregator):
 
         if not valid.any():
             if return_stats:
-                return own_vec, {'num_neighbors': N, 'avg_trust': 0.0}
+                return own_vec, {
+                    'num_neighbors': N, 'avg_trust': 0.0,
+                    'neighbor_ids': list(neighbor_ids),
+                    'phi': phi.detach().cpu().tolist(),
+                    'ratio': [1.0] * N,
+                    'tau': tau.detach().cpu().tolist(),
+                }
             return own_vec
 
         valid_vecs = neighbor_mat[valid]
@@ -79,5 +85,9 @@ class CONTRAHardAggregator(BaseAggregator):
                 'avg_trust': tau.mean().item(),
                 'min_tau': tau.min().item(),
                 'max_tau': tau.max().item(),
+                'neighbor_ids': list(neighbor_ids),
+                'phi': phi.detach().cpu().tolist(),
+                'ratio': [1.0] * N,
+                'tau': tau.detach().cpu().tolist(),
             }
         return agg_vec

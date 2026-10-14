@@ -8,7 +8,6 @@
 import sys
 import os
 import json
-import yaml
 import numpy as np
 import math
 import matplotlib
@@ -20,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from trainer import FederatedTrainer
 from utils import run_dir_name
 from experiment_io import load_cached_result, save_result
+from config_loader import load_experiment_config
 
 plt.rcParams['font.family'] = 'DejaVu Sans'
 
@@ -72,10 +72,9 @@ def run_single_combo(config_path=None):
     seed_str = os.environ.get('MVP_SEED', '')
 
     if config_path is None:
-        config_path = Path(__file__).parent.parent.parent / 'configs' / 'tau.yaml'
+        config_path = 'tau_mnist'
 
-    with open(config_path, 'r', encoding='utf-8') as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_experiment_config(config_path)
 
     # tau_decay 需要每轮记录，强制 log_interval=1
     cfg['logging']['log_interval'] = 1
@@ -128,10 +127,9 @@ def _first_below(tau_curve: list, threshold: float, warmup: int) -> int:
 def run_tau_decay(config_path=None):
     """全量入口：加载多 seed 结果，统计衰减速率，出柱状图"""
     if config_path is None:
-        config_path = Path(__file__).parent.parent.parent / 'configs' / 'tau.yaml'
+        config_path = 'tau_mnist'
 
-    with open(config_path, 'r', encoding='utf-8') as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_experiment_config(config_path)
 
     dataset = cfg['data'].get('dataset', 'mnist').lower()
     warmup = cfg.get('attack', {}).get('burn_in', {}).get('warmup_rounds', 40)

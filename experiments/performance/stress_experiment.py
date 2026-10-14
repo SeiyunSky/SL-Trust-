@@ -3,7 +3,6 @@ import os
 import sys
 from pathlib import Path
 
-import yaml
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -11,6 +10,7 @@ import matplotlib.pyplot as plt
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from experiment_io import load_cached_result, save_result
+from config_loader import load_experiment_config
 from experiment_matrix import apply_stress_value, decode_value, stress_tasks
 from utils import run_dir_name
 
@@ -18,8 +18,7 @@ ROOT = Path(__file__).parent.parent.parent
 
 
 def run_single_combo(config_path):
-    with open(config_path, encoding='utf-8') as f:
-        base_cfg = yaml.safe_load(f)
+    base_cfg = load_experiment_config(config_path)
     method = os.environ['MVP_METHOD']
     attack = os.environ['MVP_ATTACK']
     seed = int(os.environ.get('MVP_SEED', base_cfg['experiment']['seed']))
@@ -44,8 +43,7 @@ def run_single_combo(config_path):
 
 def run_summary(config_path):
     """Create a cross-seed final-accuracy plot from verified stress results."""
-    with open(config_path, encoding='utf-8') as f:
-        base_cfg = yaml.safe_load(f)
+    base_cfg = load_experiment_config(config_path)
     dimension = base_cfg['stress']['dimension']
     dataset = base_cfg['data']['dataset'].lower()
     stress = base_cfg['stress']
@@ -98,8 +96,7 @@ def run_summary(config_path):
 
 
 def print_manifest(config_path):
-    with open(config_path, encoding='utf-8') as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_experiment_config(config_path)
     tasks = stress_tasks(cfg)
     print(f"dimension={cfg['stress']['dimension']} unique_tasks={len(tasks)}")
     for task in tasks:

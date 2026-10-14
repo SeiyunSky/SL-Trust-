@@ -1,6 +1,6 @@
 """
 SLTrust-DFL 核心训练器
-支持所有聚合方法 + 信誉专属攻击（含 Burn-in 的逐轮 t 传递）
+支持所有聚合方法与 SAMA 对齐/时序 Byzantine 候选攻击。
 """
 import copy
 import os
@@ -17,9 +17,7 @@ from utils.optim import build_optimizer, build_scheduler
 from aggregators import (FedAvgAggregator, KrumAggregator, TrimmedMeanAggregator,
                          BALANCEAggregator, SAMAAggregator, CONTRAAggregator,
                          CONTRAHardAggregator, SLTrustAggregator)
-from attacks import (NoAttack, SignFlipAttack, GaussianAttack, ALIEAttack,
-                     BurnInAttack, OscillatingAttack, SlowPoisonAttack,
-                     BackdoorAttack, GradualFlipAttack, BurnInSlowAttack, get_attack)
+from attacks import ALIEAttack, LabelFlippingAttack, NoAttack, get_attack
 
 
 # ──────────────────────────────────────────────────────────
@@ -72,39 +70,14 @@ def make_aggregator(method: str, cfg: dict):
 # 攻击工厂
 # ──────────────────────────────────────────────────────────
 
-def make_attack(attack_name: str, cfg: dict, num_clients: int, num_byzantine: int):
-    attack_cfgs = cfg.get('attack', {})
-    ac = attack_cfgs.get(attack_name, {})
-
-    if attack_name == 'none':
-        return NoAttack()
-    elif attack_name == 'sign_flip':
-        return SignFlipAttack(scale=ac.get('scale', 1.0))
-    elif attack_name == 'gaussian':
-        return GaussianAttack(std=ac.get('std', 5.0))
-    elif attack_name == 'alie':
-        return ALIEAttack(num_byzantine=num_byzantine, num_clients=num_clients)
-    elif attack_name == 'burn_in':
-        return BurnInAttack(warmup_rounds=ac.get('warmup_rounds', 40),
-                            scale=ac.get('scale', 1.0))
-    elif attack_name == 'oscillating':
-        return OscillatingAttack(period_attack=ac.get('period_attack', 10),
-                                 period_rest=ac.get('period_rest', 15),
-                                 scale=ac.get('scale', 1.0))
-    elif attack_name == 'slow_poison':
-        return SlowPoisonAttack(scale=ac.get('scale', 0.1))
-    elif attack_name == 'backdoor':
-        return BackdoorAttack(lambda_bd=ac.get('lambda_bd', 0.3),
-                              seed=ac.get('seed', 0))
-    elif attack_name == 'gradual_flip':
-        return GradualFlipAttack(warmup_rounds=ac.get('warmup_rounds', 40),
-                                 ramp_rounds=ac.get('ramp_rounds', 20),
-                                 scale=ac.get('scale', 1.0))
-    elif attack_name == 'burn_in_slow':
-        return BurnInSlowAttack(warmup_rounds=ac.get('warmup_rounds', 40),
-                                scale=ac.get('scale', 0.3))
-    else:
-        raise ValueError(f"Unknown attack: {attack_name}")
+def make_attack(attack_name: str, cfg: dict, num_clients: int,
+                num_byzantine: int, num_classes: int):
+    kwargs = dict(cfg.get('attack', {}).get(attack_name, {}))
+    if attack_name == 'alie':
+        kwargs.update(num_byzantine=num_byzantine, num_clients=num_clients)
+    elif attack_name == 'label_flipping':
+        kwargs.setdefault('num_classes', num_classes)
+    return get_attack(attack_name, **kwargs)
 
 
 # ──────────────────────────────────────────────────────────
@@ -176,8 +149,8 @@ class FederatedTrainer:
             aggregators = [_agg_proto] * self.num_clients
             aggregator = _agg_proto
 
-        attack = make_attack(attack_name, self.cfg,
-                             self.num_clients, self.num_byzantine)
+        attack = make_attack(attack_name, self.cfg, self.num_clients,
+                             self.num_byzantine, self._num_classes)
 
         # 所有客户端从同一初始模型出发；随后各自维护独立参数和优化器状态。
         initial_model = build_model(
@@ -195,30 +168,42 @@ class FederatedTrainer:
             build_scheduler(optimizer, self.cfg) for optimizer in optimizers)
             if scheduler is not None]
 
-        history = {'test_acc': [], 'test_loss': [], 'consensus_error': [],
-                   'tau_byz': []}   # 平均 τ (byzantine neighbors) per log step，仅信誉方法有值
+        history = {
+            'test_acc': [], 'test_loss': [], 'consensus_error': [], 'tau_byz': [],
+            # Per-round, per-observer edge evidence.  This is deliberately not
+            # reconstructed from aggregate accuracy/tau logs: it is the only
+            # formal source for phi, ratio, tau, gamma and honest-edge controls.
+            'mechanism_trace': {'version': 1, 'rounds': []},
+        }
 
         for t in range(num_rounds):
-            # NoAttack 时所有节点训练；存在攻击时仅诚实节点执行本地训练，
-            # Byzantine 节点保留上一轮模型状态供攻击函数改写。
+            # Byzantine 客户端永不聚合邻居。只有需要新鲜候选的攻击（标签翻转、
+            # 时序 Gaussian 与方向扰动）才让 Byzantine 执行本地 SGD。
             local_models = []
             for i in range(self.num_clients):
                 m = models[i]
-                is_training_node = i in self.honest_nodes or isinstance(attack, NoAttack)
+                is_byzantine = i in self.byzantine_nodes
+                is_training_node = (
+                    not is_byzantine
+                    or isinstance(attack, NoAttack)
+                    or attack.trains_byzantine_locally
+                )
                 if is_training_node:
                     m.train()
                     for _ in range(local_epochs):
                         for data, target in self.train_loaders[i]:
                             data = data.to(self.device, non_blocking=True)
                             target = target.to(self.device, non_blocking=True)
+                            if is_byzantine and isinstance(attack, LabelFlippingAttack):
+                                target = attack.flip_labels(target)
                             optimizers[i].zero_grad()
                             loss = torch.nn.functional.cross_entropy(m(data), target)
                             loss.backward()
                             optimizers[i].step()
                 local_models.append(aggregator.model_to_vector(m).clone())
 
-            # 攻击直接改写 Byzantine 候选模型。该模型既作为本轮广播，
-            # 也在本轮结束时成为该节点下一轮的模型状态。
+            # 攻击改写 Byzantine 广播候选。对动态攻击，这里处理的是刚由本轮
+            # 本地 SGD 生成的 candidate；所有 Byzantine 都不参与邻居聚合。
             if isinstance(attack, ALIEAttack):
                 honest_models = [local_models[i] for i in self.honest_nodes]
                 malicious_model = attack.attack(honest_models)
@@ -238,6 +223,7 @@ class FederatedTrainer:
             # 在本地候选模型与邻居聚合模型之间执行一次 self-anchor 插值。
             all_models = torch.stack(local_models)
             updated_model_vecs = []
+            round_edges = []
             for i in range(self.num_clients):
                 own_model = local_models[i]
                 nb_ids = self.neighbors[i]
@@ -254,11 +240,35 @@ class FederatedTrainer:
                     else:
                         agg_model, stats = node_agg.aggregate(
                             own_model, nb_models, t=t, T=num_rounds, return_stats=True)
+                    # Reputation aggregators expose raw arrays aligned with
+                    # neighbor_ids.  Preserve Byzantine and honest edges alike
+                    # and compute gamma at each honest receiver from its actual
+                    # normalized reputation mass.
+                    if i in self.honest_nodes and all(
+                            key in stats for key in ('neighbor_ids', 'phi', 'ratio', 'tau')):
+                        total_tau = sum(float(value) for value in stats['tau'])
+                        byz_tau = sum(
+                            float(value) for sender, value in zip(stats['neighbor_ids'], stats['tau'])
+                            if sender in self.byzantine_nodes
+                        )
+                        gamma = byz_tau / total_tau if total_tau > 0 else 0.0
+                        for sender, phi, ratio, tau in zip(
+                                stats['neighbor_ids'], stats['phi'], stats['ratio'], stats['tau']):
+                            round_edges.append({
+                                'receiver': int(i), 'sender': int(sender),
+                                'is_byzantine': bool(sender in self.byzantine_nodes),
+                                'phi': float(phi), 'ratio': float(ratio),
+                                'tau': float(tau), 'gamma': float(gamma),
+                            })
                     final_model = node_agg.final_update(own_model, agg_model)
                 else:
                     final_model = own_model
 
                 updated_model_vecs.append(final_model)
+
+            # Keep an explicit empty edge list for non-reputation methods; a
+            # formal mechanism plot will reject it instead of inventing values.
+            history['mechanism_trace']['rounds'].append({'round': t + 1, 'edges': round_edges})
 
             for i, model_vec in enumerate(updated_model_vecs):
                 aggregator.load_from_vector(models[i], model_vec)

@@ -140,7 +140,12 @@ class SLTrustAggregator(BaseAggregator):
 
         if not valid.any():
             if return_stats:
-                return own_vec, {'num_neighbors': N, 'avg_trust': 0.0, 'avg_ratio': 0.0}
+                return own_vec, {
+                    'num_neighbors': N, 'avg_trust': 0.0, 'avg_ratio': 0.0,
+                    # Retain per-edge quantities for trainer-side mechanism traces.
+                    'neighbor_ids': list(neighbor_ids), 'phi': phi.detach().cpu().tolist(),
+                    'ratio': list(ratios), 'tau': tau.detach().cpu().tolist(),
+                }
             return own_vec
 
         # Step 4: 幅度对齐聚合
@@ -158,5 +163,11 @@ class SLTrustAggregator(BaseAggregator):
                 'min_tau':    tau.min().item(),
                 'max_tau':    tau.max().item(),
                 'avg_ratio':  sum(ratios) / len(ratios) if ratios else 1.0,
+                # These arrays align with neighbor_ids and are intentionally raw:
+                # trainer persists them as a separate Byzantine/honest edge trace.
+                'neighbor_ids': list(neighbor_ids),
+                'phi': phi.detach().cpu().tolist(),
+                'ratio': list(ratios),
+                'tau': tau.detach().cpu().tolist(),
             }
         return agg_vec

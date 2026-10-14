@@ -6,7 +6,6 @@ MVP 验证实验：4方法 × 2攻击，确认双窗口有效性
 import sys
 import os
 import json
-import yaml
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -16,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from trainer import FederatedTrainer
 from experiment_io import load_cached_result, save_result
+from config_loader import load_experiment_config
 from utils import run_dir_name
 plt.rcParams['font.family'] = 'DejaVu Sans'
 
@@ -33,11 +33,11 @@ METHOD_COLORS = {
     'contra':  '#FF9800',
     'sltrust': '#E53935',
 }
-MVP_ATTACKS = ['sign_flip', 'burn_in', 'oscillating']
+MVP_ATTACKS = ['label_flipping', 'burn_in', 'oscillating']
 ATTACK_LABELS = {
-    'sign_flip':   'Sign Flip (persistent)',
-    'burn_in':     'Burn-in / Reputation Farming',
-    'oscillating': 'Oscillating (attack/rest cycle)',
+    'label_flipping': 'Label Flipping',
+    'burn_in':        'Burn-in Gaussian',
+    'oscillating':    'Oscillating Gaussian',
 }
 
 
@@ -47,14 +47,13 @@ def run_single_combo(config_path=None):
     从环境变量 MVP_METHOD / MVP_ATTACK 读取参数，结果存 JSON。
     """
     method = os.environ.get('MVP_METHOD', 'sltrust')
-    attack_name = os.environ.get('MVP_ATTACK', 'sign_flip')
+    attack_name = os.environ.get('MVP_ATTACK', 'label_flipping')
     seed_str = os.environ.get('MVP_SEED', '')
 
     if config_path is None:
-        config_path = Path(__file__).parent.parent.parent / 'configs' / 'mvp.yaml'
+        config_path = 'mvp_mnist'
 
-    with open(config_path, 'r', encoding='utf-8') as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_experiment_config(config_path)
 
     dataset = cfg['data'].get('dataset', 'mnist').lower()
     seed = int(seed_str) if seed_str else cfg['experiment']['seed']
@@ -82,10 +81,9 @@ def run_mvp_experiment(config_path=None):
     TUI 并行模式下不走这里——每个子进程各自调用 run_single_combo。
     """
     if config_path is None:
-        config_path = Path(__file__).parent.parent.parent / 'configs' / 'mvp.yaml'
+        config_path = 'mvp_mnist'
 
-    with open(config_path, 'r', encoding='utf-8') as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_experiment_config(config_path)
 
     save_dir = Path(__file__).parent.parent.parent / 'results'
     save_dir.mkdir(exist_ok=True)

@@ -11,13 +11,38 @@ def main_table_tasks(config: dict) -> list[dict]:
         'fedavg', 'sama', 'balance', 'krum', 'trimmed_mean',
         'contra', 'contra_hard', 'sltrust'])
     attacks = matrix.get('attacks', [
-        'none', 'sign_flip', 'gaussian', 'burn_in', 'oscillating',
-        'slow_poison', 'gradual_flip', 'backdoor'])
+        'none', 'gaussian', 'label_flipping', 'alie', 'broken_node',
+        'burn_in', 'oscillating'])
     seeds = matrix.get('seeds', [config['experiment']['seed']])
     return [
         {'method': method, 'attack': attack, 'seed': int(seed)}
         for seed in seeds for attack in attacks for method in methods
     ]
+
+
+def sensitivity_tasks(config: dict) -> list[dict]:
+    """Enumerate YAML-defined attack-parameter sensitivity tasks."""
+    sensitivity = config['sensitivity']
+    tasks = []
+    for seed in sensitivity['seeds']:
+        for method in sensitivity['methods']:
+            for warmup in sensitivity['burnin_warmups']:
+                tasks.append({
+                    'method': method, 'attack': 'burn_in', 'seed': int(seed),
+                    'parameter': 'warmup', 'value': int(warmup),
+                })
+            for period in sensitivity['oscillating_periods']:
+                tasks.append({
+                    'method': method, 'attack': 'oscillating', 'seed': int(seed),
+                    'parameter': 'period', 'value': int(period),
+                })
+            for lambda_bd in sensitivity['direction_lambdas']:
+                tasks.append({
+                    'method': method, 'attack': 'direction_perturbation',
+                    'seed': int(seed), 'parameter': 'lambda',
+                    'value': float(lambda_bd),
+                })
+    return tasks
 
 
 def stress_tasks(config: dict) -> list[dict]:

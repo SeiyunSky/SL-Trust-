@@ -5,7 +5,6 @@
 import sys
 import os
 import json
-import yaml
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -16,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from trainer import FederatedTrainer
 from utils import run_dir_name
 from experiment_io import load_cached_result, save_result
+from config_loader import load_experiment_config
 
 plt.rcParams['font.family'] = 'DejaVu Sans'
 
@@ -51,10 +51,9 @@ def run_single_combo(config_path=None):
     seed_str = os.environ.get('MVP_SEED', '')
 
     if config_path is None:
-        config_path = Path(__file__).parent.parent.parent / 'configs' / 'ablation.yaml'
+        config_path = 'ablation_mnist'
 
-    with open(config_path, 'r', encoding='utf-8') as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_experiment_config(config_path)
 
     seed = int(seed_str) if seed_str else cfg['experiment']['seed']
     cfg['experiment']['seed'] = seed
@@ -78,10 +77,9 @@ def run_single_combo(config_path=None):
 def run_ablation(config_path=None):
     """全量入口：加载缓存或串行回退，出图。"""
     if config_path is None:
-        config_path = Path(__file__).parent.parent.parent / 'configs' / 'ablation.yaml'
+        config_path = 'ablation_mnist'
 
-    with open(config_path, 'r', encoding='utf-8') as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_experiment_config(config_path)
 
     dataset = cfg['data'].get('dataset', 'mnist').lower()
     seed = int(os.environ.get('MVP_SEED', cfg['experiment']['seed']))

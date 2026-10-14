@@ -64,15 +64,14 @@ DISPLAY_METHOD = {
 }
 DISPLAY_ATTACK = {
     "none": "No Attack",
-    "sign_flip": "Sign Flip",
     "gaussian": "Gaussian Noise",
+    "label_flipping": "Label Flipping",
     "alie": "ALIE",
-    "burn_in": "Burn-in / Reputation Farming",
-    "oscillating": "Oscillating",
-    "slow_poison": "Slow Poison",
-    "gradual_flip": "Gradual Flip",
-    "burn_in_slow": "BurnIn+SlowPoison",
-    "backdoor": "Backdoor",
+    "broken_node": "Broken Node",
+    "burn_in": "Burn-in Gaussian",
+    "oscillating": "Oscillating Gaussian",
+    "gradual_gaussian": "Gradual Gaussian",
+    "direction_perturbation": "Direction Perturbation",
 }
 METHOD_ORDER = [
     "fedavg", "sama", "balance", "krum", "trimmed_mean", "contra",
@@ -80,8 +79,8 @@ METHOD_ORDER = [
     "sltrust_short_only", "sltrust_long_only",
 ]
 ATTACK_ORDER = [
-    "none", "sign_flip", "gaussian", "alie", "burn_in", "oscillating",
-    "slow_poison", "gradual_flip", "burn_in_slow", "backdoor",
+    "none", "gaussian", "label_flipping", "alie", "broken_node",
+    "burn_in", "oscillating", "gradual_gaussian", "direction_perturbation",
 ]
 # Keep the palette and emphasis rules of the original experiment scripts.
 METHOD_COLORS = {
@@ -92,10 +91,10 @@ METHOD_COLORS = {
     "sltrust_long_only": "#4CAF50",
 }
 ATTACK_COLORS = {
-    "none": "#9E9E9E", "sign_flip": "#E53935", "gaussian": "#FF9800",
-    "alie": "#F06292", "burn_in": "#2196F3", "oscillating": "#4CAF50",
-    "slow_poison": "#00BCD4", "gradual_flip": "#9C27B0",
-    "burn_in_slow": "#795548", "backdoor": "#FF5722",
+    "none": "#9E9E9E", "gaussian": "#FF9800", "label_flipping": "#E53935",
+    "alie": "#F06292", "broken_node": "#607D8B", "burn_in": "#2196F3",
+    "oscillating": "#4CAF50", "gradual_gaussian": "#9C27B0",
+    "direction_perturbation": "#FF5722",
 }
 
 

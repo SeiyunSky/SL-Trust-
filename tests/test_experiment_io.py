@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from experiment_io import (
+    EXPERIMENT_CONTRACT,
     history_is_complete,
     load_cached_result,
     result_identity,
@@ -34,6 +35,10 @@ class ExperimentIOTest(unittest.TestCase):
             'consensus_error': [1, 2, 3, 4, 5],
             'tau_byz': [1, 2, 3, 4, 5],
         }
+
+    def test_identity_marks_current_experiment_contract(self):
+        identity = result_identity(self.cfg, 'main_table', 'sltrust', 'burn_in')
+        self.assertEqual(EXPERIMENT_CONTRACT, identity['experiment_contract'])
 
     def test_complete_history_uses_actual_logged_rounds(self):
         self.assertTrue(history_is_complete(self.history, self.cfg))

@@ -11,6 +11,9 @@ from typing import Any
 
 RESULT_SCHEMA_VERSION = 3
 PROTOCOL = "candidate-model-state-v3"
+# Separates protocol-compatible but semantically stale runs (old attack contract
+# or S/L window) from formal results produced after the unified experiment plan.
+EXPERIMENT_CONTRACT = "sltrust-dfl-2026-10-current-attacks-sl10-l30"
 _REQUIRED_SERIES = ("test_acc", "test_loss", "consensus_error", "tau_byz")
 _FINITE_SERIES = ("test_acc", "test_loss", "consensus_error")
 
@@ -37,6 +40,7 @@ def result_identity(cfg: dict, suite: str, method: str, attack: str,
     payload = {
         "schema_version": RESULT_SCHEMA_VERSION,
         "protocol": PROTOCOL,
+        "experiment_contract": EXPERIMENT_CONTRACT,
         "suite": suite,
         "method": method,
         "attack": attack,

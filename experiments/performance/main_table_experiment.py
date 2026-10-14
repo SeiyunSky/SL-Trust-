@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from utils import run_dir_name
 from experiment_io import load_cached_result, save_result
 from experiment_matrix import main_table_tasks
+from config_loader import load_experiment_config
 
 plt.rcParams['font.family'] = 'DejaVu Sans'
 
@@ -52,34 +53,31 @@ METHOD_COLORS = {
 }
 METHOD_STYLES = {m: ('-' if m == 'sltrust' else '--') for m in MAIN_METHODS}
 
-# ALIE 已从论文计划删除。Slow Poison 对 norm-aligned 方法与 Sign Flip
-# 等价，但对不执行幅度对齐的基线仍可能不同，因此保留在完整主表中。
-DEFAULT_ATTACKS = ['none', 'sign_flip', 'gaussian', 'burn_in', 'oscillating',
-                   'slow_poison', 'gradual_flip', 'backdoor']
+# SAMA-aligned attack families plus SLTrust's temporal Gaussian schedules.
+DEFAULT_ATTACKS = ['none', 'gaussian', 'label_flipping', 'alie', 'broken_node',
+                   'burn_in', 'oscillating']
 MAIN_ATTACKS = list(DEFAULT_ATTACKS)
 ATTACK_LABELS = {
     'none':         'No Attack',
-    'sign_flip':    'Sign Flip',
-    'gaussian':     'Gaussian Noise',
-    'alie':         'ALIE',
-    'burn_in':      'Burn-in / Reputation Farming',
-    'oscillating':  'Oscillating',
-    'slow_poison':  'Slow Poison',
-    'gradual_flip': 'Gradual Flip',
-    'burn_in_slow': 'BurnIn+SlowPoison',
-    'backdoor':     'Backdoor',
+    'gaussian':               'Gaussian Noise',
+    'label_flipping':         'Label Flipping',
+    'alie':                   'ALIE',
+    'broken_node':            'Broken Node',
+    'burn_in':                'Burn-in Gaussian',
+    'oscillating':            'Oscillating Gaussian',
+    'gradual_gaussian':       'Gradual Gaussian',
+    'direction_perturbation': 'Direction Perturbation',
 }
 ATTACK_COLORS = {
     'none':         '#9E9E9E',
-    'sign_flip':    '#E53935',
-    'gaussian':     '#FF9800',
-    'alie':         '#F06292',
-    'burn_in':      '#2196F3',
-    'oscillating':  '#4CAF50',
-    'slow_poison':  '#00BCD4',
-    'gradual_flip': '#9C27B0',
-    'burn_in_slow': '#795548',
-    'backdoor':     '#FF5722',
+    'gaussian':               '#FF9800',
+    'label_flipping':         '#E53935',
+    'alie':                   '#F06292',
+    'broken_node':            '#607D8B',
+    'burn_in':                '#2196F3',
+    'oscillating':            '#4CAF50',
+    'gradual_gaussian':       '#9C27B0',
+    'direction_perturbation': '#FF5722',
 }
 
 
@@ -110,14 +108,13 @@ def _run_dir(save_dir: Path, dataset: str, seed: int) -> Path:
 def run_single_combo(config_path=None):
     """子进程入口：跑单个 (method, attack)，结果存 JSON。"""
     method = os.environ.get('MVP_METHOD', 'sltrust')
-    attack_name = os.environ.get('MVP_ATTACK', 'sign_flip')
+    attack_name = os.environ.get('MVP_ATTACK', 'gaussian')
     seed_str = os.environ.get('MVP_SEED', '')
 
     if config_path is None:
-        config_path = Path(__file__).parent.parent.parent / 'configs' / 'main_table.yaml'
+        config_path = 'main_table_mnist'
 
-    with open(config_path, 'r', encoding='utf-8') as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_experiment_config(config_path)
 
     seed = int(seed_str) if seed_str else cfg['experiment']['seed']
     cfg['experiment']['seed'] = seed
@@ -145,9 +142,8 @@ def run_single_combo(config_path=None):
 def print_manifest(config_path=None):
     """Enumerate the configured method-attack-seed matrix without training."""
     if config_path is None:
-        config_path = Path(__file__).parent.parent.parent / 'configs' / 'main_table.yaml'
-    with open(config_path, 'r', encoding='utf-8') as f:
-        cfg = yaml.safe_load(f)
+        config_path = 'main_table_mnist'
+    cfg = load_experiment_config(config_path)
     tasks = main_table_tasks(cfg)
     print(f"dataset={cfg['data']['dataset']} unique_tasks={len(tasks)}")
     for task in tasks:
@@ -158,9 +154,8 @@ def print_manifest(config_path=None):
 def run_configured_seeds(config_path=None):
     """Run and plot every seed declared by a configured main-table matrix."""
     if config_path is None:
-        config_path = Path(__file__).parent.parent.parent / 'configs' / 'main_table.yaml'
-    with open(config_path, 'r', encoding='utf-8') as f:
-        cfg = yaml.safe_load(f)
+        config_path = 'main_table_mnist'
+    cfg = load_experiment_config(config_path)
     seeds = cfg.get('matrix', {}).get('seeds', [cfg['experiment']['seed']])
     previous_seed = os.environ.get('MVP_SEED')
     try:
@@ -177,10 +172,9 @@ def run_configured_seeds(config_path=None):
 def run_main_table(config_path=None):
     """出图入口：读取当前 seed 目录的全部 JSON，出完整图集。"""
     if config_path is None:
-        config_path = Path(__file__).parent.parent.parent / 'configs' / 'main_table.yaml'
+        config_path = 'main_table_mnist'
 
-    with open(config_path, 'r', encoding='utf-8') as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_experiment_config(config_path)
     _activate_matrix(cfg)
 
     dataset = cfg['data'].get('dataset', 'mnist').lower()

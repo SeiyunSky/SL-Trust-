@@ -9,7 +9,9 @@ from aggregators.fedavg import FedAvgAggregator
 from aggregators.krum import KrumAggregator
 from aggregators.sltrust import SLTrustAggregator
 from aggregators.trimmed_mean import TrimmedMeanAggregator
-from attacks import GaussianAttack, SignFlipAttack
+from attacks import (BrokenNodeAttack, BurnInAttack, DirectionPerturbationAttack,
+                     GaussianAttack, GradualGaussianAttack, LabelFlippingAttack,
+                     OscillatingAttack)
 
 
 class ModelProtocolTest(unittest.TestCase):
@@ -68,30 +70,49 @@ class ModelProtocolTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             KrumAggregator(byzantine_ratio=0.2).aggregate(own, neighbors)
 
-    def test_sign_flip_attacks_candidate_model(self):
-        candidate_model = torch.tensor([101.0, 98.0])
-
-        malicious_model = SignFlipAttack(scale=1.0).attack(candidate_model)
-
-        torch.testing.assert_close(malicious_model, torch.tensor([-101.0, -98.0]))
-
-    def test_malicious_candidate_is_written_back_as_internal_state(self):
-        internal_model = torch.tensor([101.0, 98.0])
-
-        malicious_candidate = SignFlipAttack().attack(internal_model)
-        next_internal_model = malicious_candidate
-
-        torch.testing.assert_close(malicious_candidate, torch.tensor([-101.0, -98.0]))
-        torch.testing.assert_close(next_internal_model, malicious_candidate)
-
-    def test_gaussian_noise_is_scaled_by_candidate_model_rms(self):
-        candidate_model = torch.full((100,), 0.01)
+    def test_gaussian_attacks_candidate_with_configured_std(self):
+        candidate_model = torch.zeros(100)
         torch.manual_seed(7)
         attacked = GaussianAttack(std=2.0).attack(candidate_model)
 
-        noise_rms = (attacked - candidate_model).norm() / candidate_model.numel() ** 0.5
-        self.assertGreater(noise_rms.item(), 0.01)
-        self.assertLess(noise_rms.item(), 0.03)
+        noise_std = (attacked - candidate_model).std()
+        self.assertGreater(noise_std.item(), 1.5)
+        self.assertLess(noise_std.item(), 2.5)
+
+    def test_label_flipping_changes_labels_and_requires_fresh_candidate(self):
+        attack = LabelFlippingAttack(num_classes=10)
+        labels = torch.tensor([0, 1, 8, 9])
+
+        torch.testing.assert_close(attack.flip_labels(labels), torch.tensor([9, 8, 1, 0]))
+        self.assertTrue(attack.trains_byzantine_locally)
+
+    def test_broken_node_keeps_stale_state_without_local_training(self):
+        attack = BrokenNodeAttack()
+        stale_model = torch.tensor([101.0, 98.0])
+
+        torch.testing.assert_close(attack.attack(stale_model), stale_model)
+        self.assertFalse(attack.trains_byzantine_locally)
+
+    def test_timed_gaussian_attacks_use_fresh_candidate_and_schedule(self):
+        candidate = torch.ones(16)
+        burn_in = BurnInAttack(warmup_rounds=2, std=1.0)
+        oscillating = OscillatingAttack(period_attack=1, period_rest=1, std=1.0)
+        gradual = GradualGaussianAttack(warmup_rounds=2, ramp_rounds=2, std=1.0)
+
+        torch.testing.assert_close(burn_in.attack(candidate, t=1), candidate)
+        torch.testing.assert_close(oscillating.attack(candidate, t=1), candidate)
+        torch.testing.assert_close(gradual.attack(candidate, t=2), candidate)
+        self.assertFalse(torch.equal(burn_in.attack(candidate, t=2), candidate))
+        self.assertFalse(torch.equal(oscillating.attack(candidate, t=0), candidate))
+        self.assertFalse(torch.equal(gradual.attack(candidate, t=3), candidate))
+        self.assertTrue(burn_in.trains_byzantine_locally)
+
+    def test_direction_perturbation_operates_on_fresh_candidate(self):
+        candidate = torch.tensor([3.0, 4.0])
+        attack = DirectionPerturbationAttack(lambda_bd=0.3, seed=7)
+
+        self.assertTrue(attack.trains_byzantine_locally)
+        self.assertFalse(torch.equal(attack.attack(candidate), candidate))
 
     def test_sltrust_aligns_neighbor_model_to_own_norm(self):
         own = torch.tensor([3.0, 4.0])

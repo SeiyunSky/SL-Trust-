@@ -1,11 +1,10 @@
 """
-τ 演化实验：contra vs sltrust × 全部7攻击
+τ 演化实验：CONTRA vs SLTrust × 正式攻击矩阵
 每轮记录对拜占庭邻居的平均τ（log_interval=1），每个攻击单独出一张τ演化曲线图。
 """
 import sys
 import os
 import json
-import yaml
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -16,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from trainer import FederatedTrainer
 from utils import run_dir_name
 from experiment_io import load_cached_result, save_result
+from config_loader import load_experiment_config
 
 plt.rcParams['font.family'] = 'DejaVu Sans'
 
@@ -29,17 +29,19 @@ METHOD_COLORS = {
     'sltrust': '#E53935',
 }
 
-TAU_ATTACKS = ['sign_flip', 'gaussian', 'burn_in', 'oscillating', 'slow_poison', 'backdoor', 'gradual_flip']
+TAU_ATTACKS = [
+    'gaussian', 'label_flipping', 'alie', 'broken_node',
+    'burn_in', 'oscillating', 'gradual_gaussian', 'direction_perturbation',
+]
 ATTACK_LABELS = {
-    'sign_flip':    'Sign Flip',
-    'gaussian':     'Gaussian Noise',
-    'alie':         'ALIE',
-    'burn_in':      'Burn-in / Reputation Farming',
-    'oscillating':  'Oscillating',
-    'slow_poison':  'Slow Poison',
-    'backdoor':     'Backdoor',
-    'gradual_flip': 'Gradual Flip',
-    'burn_in_slow': 'BurnIn+SlowPoison',
+    'gaussian':               'Gaussian Noise',
+    'label_flipping':         'Label Flipping',
+    'alie':                   'ALIE',
+    'broken_node':            'Broken Node',
+    'burn_in':                'Burn-in Gaussian',
+    'oscillating':            'Oscillating Gaussian',
+    'gradual_gaussian':       'Gradual Gaussian',
+    'direction_perturbation': 'Direction Perturbation',
 }
 
 
@@ -54,10 +56,9 @@ def run_single_combo(config_path=None):
     seed_str = os.environ.get('MVP_SEED', '')
 
     if config_path is None:
-        config_path = Path(__file__).parent.parent.parent / 'configs' / 'tau.yaml'
+        config_path = 'tau_mnist'
 
-    with open(config_path, 'r', encoding='utf-8') as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_experiment_config(config_path)
 
     seed = int(seed_str) if seed_str else cfg['experiment']['seed']
     cfg['experiment']['seed'] = seed
@@ -81,10 +82,9 @@ def run_single_combo(config_path=None):
 def run_tau_experiment(config_path=None):
     """全量入口：加载缓存或串行回退，出图。"""
     if config_path is None:
-        config_path = Path(__file__).parent.parent.parent / 'configs' / 'tau.yaml'
+        config_path = 'tau_mnist'
 
-    with open(config_path, 'r', encoding='utf-8') as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_experiment_config(config_path)
 
     dataset = cfg['data'].get('dataset', 'mnist').lower()
     seed = int(os.environ.get('MVP_SEED', cfg['experiment']['seed']))

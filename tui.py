@@ -63,7 +63,7 @@ EXPERIMENTS = {
         ]
     },
     'C': {
-        'label': '主表实验 — 8方法×8攻击',
+        'label': '主表实验 — 可选方法×攻击矩阵',
         'items': [
             ('C1', 'main_table',          '主表 MNIST 串行'),
             ('C2', 'main_table_parallel', '主表 MNIST 并行（多轮多seed）'),
@@ -76,7 +76,7 @@ EXPERIMENTS = {
     'D': {
         'label': 'τ 演化实验',
         'items': [
-            ('D1', 'tau_mnist',   'τ 演化 MNIST（contra+sltrust × 7攻击）'),
+            ('D1', 'tau_mnist',   'τ 演化 MNIST（CONTRA+SLTrust × 正式攻击矩阵）'),
             ('D2', 'tau_cifar10', 'τ 演化 CIFAR-10'),
         ]
     },
@@ -90,9 +90,9 @@ EXPERIMENTS = {
     'F': {
         'label': '参数敏感性实验',
         'items': [
-            ('F1', 'sens_burnin',  'Burn-in warmup 扫描（warmup=20/40/60/80）'),
-            ('F2', 'sens_osc',     'Oscillating period 扫描（period=5/10/20）'),
-            ('F3', 'sens_plot',    '敏感性实验出图'),
+            ('F1', 'sens_burnin',  'Burn-in warm-up 扫描（K∈{0,20,40,60}）'),
+            ('F2', 'sens_osc',     'Oscillating period 扫描（period∈{5,10,20}）'),
+            ('F3', 'sens_plot',    '敏感性实验仅出图'),
             ('F4', 'sens_sl_grid', 'S/L 超参网格扫描（S∈{2,3,5,10} × L∈{5,10,20,40}）'),
         ]
     },
@@ -526,14 +526,15 @@ def run_parallel(jobs: list, max_concurrent: int = 6):
 
 
 ALL_ATTACKS = [
-    ('none',         'No Attack'),
-    ('sign_flip',    'Sign Flip'),
-    ('gaussian',     'Gaussian Noise'),
-    ('burn_in',      'Burn-in'),
-    ('oscillating',  'Oscillating'),
-    ('slow_poison',  'Slow Poison'),
-    ('gradual_flip', 'Gradual Flip'),
-    ('backdoor',     'Backdoor'),
+    ('none',                   'No Attack'),
+    ('gaussian',               'Gaussian Noise'),
+    ('label_flipping',         'Label Flipping'),
+    ('alie',                   'ALIE'),
+    ('broken_node',            'Broken Node'),
+    ('burn_in',                'Burn-in Gaussian'),
+    ('oscillating',            'Oscillating Gaussian'),
+    ('gradual_gaussian',       'Gradual Gaussian'),
+    ('direction_perturbation', 'Direction Perturbation'),
 ]
 
 ALL_METHODS = [
@@ -637,7 +638,7 @@ def render_menu():
                  border_style="blue")
 
 
-def main():
+def legacy_main():
     if not sys.stdin.isatty():
         console.print("[red]tui.py requires an interactive terminal.[/red]")
         console.print("[dim]Open PowerShell or CMD and run: python tui.py[/dim]")
@@ -817,11 +818,9 @@ def main():
 
         # ── CIFAR-100 精简泛化（固定 YAML 矩阵）────────────────
         if choice.upper() in ('G1', 'GENERALIZATION_CIFAR100_PARALLEL'):
-            import yaml
+            from config_loader import load_experiment_config
             from experiment_matrix import main_table_tasks
-            cfg_path = PROJ_DIR / 'configs' / 'generalization_cifar100.yaml'
-            with open(cfg_path, encoding='utf-8') as f:
-                tasks = main_table_tasks(yaml.safe_load(f))
+            tasks = main_table_tasks(load_experiment_config('generalization_cifar100'))
             jobs = [ExperimentRunner(
                 'generalization_cifar100_single',
                 f"cifar100|s{task['seed']}|{task['method']}|{task['attack']}",
@@ -843,12 +842,10 @@ def main():
             'G4': 'byzantine_ratio', 'STRESS_BYZANTINE_RATIO_PARALLEL': 'byzantine_ratio',
         }
         if choice.upper() in stress_choices:
-            import yaml
+            from config_loader import load_experiment_config
             from experiment_matrix import encode_value, stress_tasks
             dimension = stress_choices[choice.upper()]
-            cfg_path = PROJ_DIR / 'configs' / f'stress_{dimension}_mnist.yaml'
-            with open(cfg_path, encoding='utf-8') as f:
-                tasks = stress_tasks(yaml.safe_load(f))
+            tasks = stress_tasks(load_experiment_config(f'stress_{dimension}_mnist'))
             jobs = [ExperimentRunner(
                 f'stress_{dimension}_single',
                 f"{dimension}|s{task['seed']}|{task['method']}|{task['attack']}|{task['value']}",
@@ -967,8 +964,9 @@ def main():
                                 ))
 
                 tau_methods_all = ['contra', 'sltrust']
-                tau_attacks_all = ['burn_in', 'oscillating', 'sign_flip', 'gaussian',
-                                   'slow_poison', 'gradual_flip', 'backdoor']
+                tau_attacks_all = ['gaussian', 'label_flipping', 'alie', 'broken_node',
+                                   'burn_in', 'oscillating', 'gradual_gaussian',
+                                   'direction_perturbation']
 
                 if 'tau' in selected_types:
                     exp_single = 'tau_cifar10_single' if is_cifar else 'tau_mnist_single'
@@ -1049,6 +1047,221 @@ def main():
 
         console.print()
         console.print(render_results_table())
+
+
+# The composable workflow is defined below; legacy_main remains only as source history.
+
+
+def _parse_selection(raw, entries):
+    """Select keys by index or key; blank selects all entries."""
+    raw = raw.strip().lower()
+    if raw in ('', 'a', 'all'):
+        return [key for key, _ in entries]
+    selected = []
+    for token in raw.replace(',', ' ').split():
+        if token.isdigit() and 1 <= int(token) <= len(entries):
+            selected.append(entries[int(token) - 1][0])
+        elif token in {key for key, _ in entries}:
+            selected.append(token)
+    return list(dict.fromkeys(selected))
+
+
+def _select_entries(title, entries, default_all=True):
+    console.print(f'\n[bold]{title}[/bold]（多选：编号或名称，以空格/逗号分隔）')
+    for index, (key, label) in enumerate(entries, 1):
+        console.print(f'  [cyan]{index}[/cyan] {label} [dim]({key})[/dim]')
+    default = '' if default_all else '1'
+    selected = _parse_selection(Prompt.ask('选择（留空=全部）', default=default), entries)
+    if not selected:
+        console.print('[yellow]未识别选择，回退为全部。[/yellow]')
+        return [key for key, _ in entries]
+    return selected
+
+
+def _suite_entries():
+    return [
+        ('mvp', 'MVP 验证'), ('main', '主表 / 自定义方法×攻击矩阵'),
+        ('ablation', 'SLTrust 消融'), ('tau', 'τ 演化'),
+        ('tau_decay', 'τ 衰减'), ('sensitivity', '攻击参数敏感性（YAML 定义）'),
+        ('sl_grid', 'S/L 超参数网格'), ('generalization', 'CIFAR-100 泛化（YAML 矩阵）'),
+        ('stress_non_iid', 'MNIST Non-IID 压力'),
+        ('stress_topology', 'MNIST topology 压力'),
+        ('stress_byzantine_ratio', 'MNIST Byzantine-ratio 压力'),
+    ]
+
+
+def _dataset_for_suite(suite):
+    if suite == 'generalization':
+        return ['cifar100']
+    if suite.startswith('stress_') or suite in ('sensitivity', 'sl_grid'):
+        return ['mnist']
+    return None
+
+
+def _single_experiment(suite, dataset):
+    suffix = '_cifar10' if dataset == 'cifar10' else ''
+    mapping = {
+        'mvp': f'mvp{suffix}_single',
+        'main': f'main_table{suffix}_single',
+        'ablation': f'ablation{suffix}_single' if suffix else 'ablation_single',
+        'tau': f'tau{suffix}_single' if suffix else 'tau_mnist_single',
+        'tau_decay': f'tau_decay{suffix}_single' if suffix else 'tau_decay_mnist_single',
+        'sensitivity': 'sensitivity_single',
+        'sl_grid': 'sensitivity_sl_single',
+        'generalization': 'generalization_cifar100_single',
+    }
+    if suite.startswith('stress_'):
+        return f"{suite}_single"
+    return mapping[suite]
+
+
+def _plot_experiment(suite, dataset):
+    suffix = '_cifar10' if dataset == 'cifar10' else ''
+    mapping = {
+        'mvp': f'mvp{suffix}_plot', 'main': f'main_table{suffix}_plot',
+        'ablation': f'ablation{suffix}_plot' if suffix else 'ablation_plot',
+        'tau': f'tau{suffix}' if suffix else 'tau_mnist',
+        'tau_decay': f'tau_decay{suffix}' if suffix else 'tau_decay_mnist',
+        'sensitivity': 'sensitivity_plot', 'sl_grid': 'sensitivity_plot',
+        'generalization': 'generalization_cifar100_plot',
+    }
+    if suite.startswith('stress_'):
+        return f"{suite}_plot"
+    return mapping[suite]
+
+
+def build_paper_jobs(suites, datasets, methods, attacks, seeds):
+    """Build the only job model used by paper_all and all shortcuts.
+
+    Each returned ExperimentRunner maps exactly to a run_experiments.py single-job
+    command; parameter/stress matrices are enumerated from experiments.yaml.
+    """
+    from config_loader import load_experiment_config
+    from experiment_matrix import encode_value, main_table_tasks, sensitivity_tasks, stress_tasks
+
+    # Keep task preview dependency-light: importing performance modules imports
+    # trainer/torch, which is unnecessary before a child process actually runs.
+    suite_defaults = {
+        'mvp': (['fedavg', 'sama', 'contra', 'sltrust'],
+                ['label_flipping', 'burn_in', 'oscillating']),
+        'ablation': (['sltrust', 'sltrust_no_ratio', 'sltrust_short_only', 'sltrust_long_only'],
+                     ['burn_in', 'oscillating']),
+        'tau': (['contra', 'sltrust'],
+                ['gaussian', 'label_flipping', 'alie', 'broken_node', 'burn_in',
+                 'oscillating', 'gradual_gaussian', 'direction_perturbation']),
+        'tau_decay': (['contra', 'contra_hard', 'sltrust', 'sltrust_m'], ['none']),
+    }
+    sl_s_values = [2, 3, 5, 10]
+    sl_l_values = [5, 10, 20, 40]
+
+    jobs = []
+    for suite in suites:
+        suite_datasets = _dataset_for_suite(suite) or datasets
+        for dataset in suite_datasets:
+            if suite == 'generalization':
+                tasks = main_table_tasks(load_experiment_config('generalization_cifar100'))
+            elif suite.startswith('stress_'):
+                dimension = suite.removeprefix('stress_')
+                tasks = stress_tasks(load_experiment_config(f'stress_{dimension}_mnist'))
+            elif suite == 'sensitivity':
+                tasks = sensitivity_tasks(load_experiment_config('sensitivity_mnist'))
+            elif suite == 'sl_grid':
+                tasks = [
+                    {'seed': seed, 'S': S, 'L': L}
+                    for seed in seeds for S in sl_s_values for L in sl_l_values if S < L
+                ]
+            else:
+                if suite in suite_defaults:
+                    default_methods, default_attacks = suite_defaults[suite]
+                else:
+                    default_methods, default_attacks = [key for key, _ in ALL_METHODS], [key for key, _ in ALL_ATTACKS]
+                tasks = [
+                    {'seed': seed, 'method': method, 'attack': attack}
+                    for seed in seeds for attack in (attacks or default_attacks)
+                    for method in (methods or default_methods)
+                ]
+            for task in tasks:
+                if methods and task.get('method') not in methods:
+                    continue
+                if attacks and task.get('attack') not in attacks:
+                    continue
+                env = {}
+                if 'method' in task: env['MVP_METHOD'] = task['method']
+                if 'attack' in task: env['MVP_ATTACK'] = task['attack']
+                if 'seed' in task: env['MVP_SEED'] = str(task['seed'])
+                if suite == 'sensitivity':
+                    env[{'warmup': 'MVP_WARMUP', 'period': 'MVP_PERIOD', 'lambda': 'MVP_LAMBDA'}[task['parameter']]] = str(task['value'])
+                elif suite == 'sl_grid':
+                    env.update({'MVP_S': str(task['S']), 'MVP_L': str(task['L'])})
+                elif suite.startswith('stress_'):
+                    env['MVP_STRESS_VALUE'] = encode_value(task['value'])
+                detail = '|'.join(str(task[key]) for key in ('seed', 'method', 'attack', 'parameter', 'value', 'S', 'L') if key in task)
+                jobs.append(ExperimentRunner(_single_experiment(suite, dataset), f'{dataset}|{suite}|{detail}', env))
+    return jobs
+
+
+def _plot_jobs(suites, datasets, seeds):
+    jobs = []
+    for suite in suites:
+        for dataset in (_dataset_for_suite(suite) or datasets):
+            for seed in (seeds if suite in ('mvp', 'main', 'ablation', 'generalization') else [None]):
+                env = {} if seed is None else {'MVP_SEED': str(seed)}
+                if suite == 'tau': env['MVP_PLOT_ONLY'] = '1'
+                jobs.append(ExperimentRunner(_plot_experiment(suite, dataset), f'{dataset}|{suite}|plot', env))
+    return jobs
+
+
+def run_composable_workflow(default_suites=None, default_datasets=None):
+    suites = default_suites or _select_entries('选择实验套件', _suite_entries())
+    variable_datasets = sorted({dataset for suite in suites for dataset in (_dataset_for_suite(suite) or [])})
+    if any(_dataset_for_suite(suite) is None for suite in suites):
+        dataset_entries = [('mnist', 'MNIST'), ('cifar10', 'CIFAR-10')]
+        datasets = default_datasets or _select_entries('选择数据集', dataset_entries)
+    else:
+        datasets = []
+    methods = _select_entries('筛选方法（对固定套件会取交集）', ALL_METHODS) if Confirm.ask('筛选方法？', default=False) else []
+    attacks = _select_entries('筛选攻击（对固定套件会取交集）', ALL_ATTACKS) if Confirm.ask('筛选攻击？', default=False) else []
+    seeds = choose_num_seeds()
+    jobs = build_paper_jobs(suites, datasets, methods, attacks, seeds)
+    console.print(f'\n[bold cyan]任务预览：{len(jobs)} 个唯一单组合任务。[/bold cyan]')
+    for job in jobs[:12]: console.print(f'  [dim]{job.label}[/dim]')
+    if len(jobs) > 12: console.print(f'  [dim]... 另有 {len(jobs) - 12} 个任务[/dim]')
+    mode = Prompt.ask('执行方式', choices=['run', 'plot', 'both', 'cancel'], default='run')
+    if mode == 'cancel': return
+    try:
+        concurrency = max(1, int(Prompt.ask('最大并发数', default='6')))
+    except ValueError:
+        concurrency = 6
+        console.print('[yellow]并发数无效，使用默认值 6。[/yellow]')
+    if mode in ('run', 'both') and jobs:
+        if not Confirm.ask(f'确认开始 {len(jobs)} 个训练/缓存复用任务？', default=False): return
+        if not run_parallel(jobs, concurrency): return
+    if mode in ('plot', 'both'):
+        plot_jobs = _plot_jobs(suites, datasets, seeds)
+        for job in plot_jobs: run_single(job.exp_key, job.label, job.extra_env)
+
+
+def main():
+    if not sys.stdin.isatty():
+        console.print('[red]tui.py requires an interactive terminal.[/red]')
+        console.print('[dim]Open PowerShell or CMD and run: python tui.py[/dim]')
+        return
+    console.clear(); console.print(render_gpu_panel()); check_and_prompt_datasets()
+    while True:
+        console.print('\n[bold cyan]paper_all 自由实验工作流[/bold cyan]')
+        console.print('  [cyan]1[/cyan] 自由组合 paper_all（推荐）')
+        console.print('  [cyan]2[/cyan] MVP 快捷入口    [cyan]3[/cyan] 主表快捷入口')
+        console.print('  [cyan]4[/cyan] 消融快捷入口   [cyan]5[/cyan] τ 演化/衰减')
+        console.print('  [cyan]6[/cyan] 敏感性/S-L      [cyan]7[/cyan] 泛化/压力测试')
+        console.print('  [cyan]q[/cyan] 退出')
+        choice = Prompt.ask('选择', default='1').strip().lower()
+        if choice in ('q', 'quit', 'exit'): break
+        groups = {'1': None, '2': ['mvp'], '3': ['main'], '4': ['ablation'],
+                  '5': ['tau', 'tau_decay'], '6': ['sensitivity', 'sl_grid'],
+                  '7': ['generalization', 'stress_non_iid', 'stress_topology', 'stress_byzantine_ratio']}
+        if choice not in groups:
+            console.print('[red]未知选项。[/red]'); continue
+        run_composable_workflow(default_suites=groups[choice])
 
 
 if __name__ == '__main__':

@@ -44,9 +44,15 @@ def main():
     parser.add_argument('--method', type=str, default=None,
                         help='单组合模式：指定方法（fedavg/sama/contra/sltrust）')
     parser.add_argument('--attack', type=str, default=None,
-                        help='单组合模式：指定攻击（sign_flip/burn_in）')
+                        help='单组合模式：指定攻击（例如 label_flipping/burn_in）')
     parser.add_argument('--seed', type=int, default=None,
                         help='覆盖单组合任务 seed')
+    parser.add_argument('--warmup', type=int, default=None,
+                        help='sensitivity single：覆盖 Burn-in warm-up rounds')
+    parser.add_argument('--period', type=int, default=None,
+                        help='sensitivity single：覆盖 oscillating attack period')
+    parser.add_argument('--lambda-bd', type=float, default=None,
+                        help='sensitivity single：覆盖 direction perturbation strength')
     parser.add_argument('--stress-value', type=str, default=None,
                         help='压力测试值的 JSON，例如 0.1 或 {"type":"ring"}')
     args = parser.parse_args()
@@ -68,16 +74,16 @@ def main():
     else:
         module = importlib.import_module('mvp_experiment')
 
-    config_dir = Path(__file__).parent / 'configs'
-    cifar_main = config_dir / 'main_table_cifar10.yaml'
-    cifar100_generalization = config_dir / 'generalization_cifar100.yaml'
-    cifar_tau  = Path(__file__).parent / 'configs' / 'tau.yaml'   # tau 暂用 mnist config，cifar 版单独建
-    cifar_abl  = Path(__file__).parent / 'configs' / 'ablation.yaml'
+    cifar_main = 'main_table_cifar10'
+    cifar100_generalization = 'generalization_cifar100'
 
     def _set_env():
         if args.method: os.environ['MVP_METHOD'] = args.method
         if args.attack:  os.environ['MVP_ATTACK'] = args.attack
         if args.seed is not None: os.environ['MVP_SEED'] = str(args.seed)
+        if args.warmup is not None: os.environ['MVP_WARMUP'] = str(args.warmup)
+        if args.period is not None: os.environ['MVP_PERIOD'] = str(args.period)
+        if args.lambda_bd is not None: os.environ['MVP_LAMBDA'] = str(args.lambda_bd)
         if args.stress_value is not None: os.environ['MVP_STRESS_VALUE'] = args.stress_value
 
     def _read_results(callable_, plot_only=False):
@@ -108,11 +114,11 @@ def main():
     elif args.experiment == 'mvp_plot':
         _plot_only(module.run_mvp_experiment)
     elif args.experiment == 'mvp_cifar10':
-        module.run_mvp_experiment(config_path=Path(__file__).parent / 'configs' / 'mvp_cifar10.yaml')
+        module.run_mvp_experiment(config_path='mvp_cifar10')
     elif args.experiment == 'mvp_cifar10_single':
-        _set_env(); module.run_single_combo(config_path=Path(__file__).parent / 'configs' / 'mvp_cifar10.yaml')
+        _set_env(); module.run_single_combo(config_path='mvp_cifar10')
     elif args.experiment == 'mvp_cifar10_plot':
-        _plot_only(lambda: module.run_mvp_experiment(config_path=Path(__file__).parent / 'configs' / 'mvp_cifar10.yaml'))
+        _plot_only(lambda: module.run_mvp_experiment(config_path='mvp_cifar10'))
 
     elif args.experiment == 'main_table':
         module.run_main_table()
@@ -138,7 +144,7 @@ def main():
     elif args.experiment.startswith('stress_'):
         dimension = (args.experiment.removeprefix('stress_')
                      .removesuffix('_single').removesuffix('_manifest').removesuffix('_plot'))
-        config_path = config_dir / f'stress_{dimension}_mnist.yaml'
+        config_path = f'stress_{dimension}_mnist'
         if args.experiment.endswith('_manifest'):
             module.print_manifest(config_path)
         elif args.experiment.endswith('_plot'):
@@ -154,22 +160,21 @@ def main():
     elif args.experiment == 'tau_mnist_single':
         _set_env(); module.run_single_combo()
     elif args.experiment == 'tau_cifar10':
-        cfg_tau_cifar = Path(__file__).parent / 'configs' / 'tau_cifar10.yaml'
         if os.environ.get('MVP_PLOT_ONLY') == '1':
-            _plot_only(lambda: module.run_tau_experiment(config_path=cfg_tau_cifar))
+            _plot_only(lambda: module.run_tau_experiment(config_path='tau_cifar10'))
         else:
-            module.run_tau_experiment(config_path=cfg_tau_cifar)
+            module.run_tau_experiment(config_path='tau_cifar10')
     elif args.experiment == 'tau_cifar10_single':
-        _set_env(); module.run_single_combo(config_path=Path(__file__).parent / 'configs' / 'tau_cifar10.yaml')
+        _set_env(); module.run_single_combo(config_path='tau_cifar10')
 
     elif args.experiment == 'tau_decay_mnist':
         _read_results(module.run_tau_decay)
     elif args.experiment == 'tau_decay_mnist_single':
         _set_env(); module.run_single_combo()
     elif args.experiment == 'tau_decay_cifar10':
-        _read_results(lambda: module.run_tau_decay(config_path=Path(__file__).parent / 'configs' / 'tau_cifar10.yaml'))
+        _read_results(lambda: module.run_tau_decay(config_path='tau_cifar10'))
     elif args.experiment == 'tau_decay_cifar10_single':
-        _set_env(); module.run_single_combo(config_path=Path(__file__).parent / 'configs' / 'tau_cifar10.yaml')
+        _set_env(); module.run_single_combo(config_path='tau_cifar10')
 
     elif args.experiment == 'ablation_mnist':
         module.run_ablation()
@@ -178,12 +183,11 @@ def main():
     elif args.experiment == 'ablation_plot':
         _plot_only(module.run_ablation)
     elif args.experiment == 'ablation_cifar10':
-        cfg_abl_cifar = Path(__file__).parent / 'configs' / 'ablation_cifar10.yaml'
-        module.run_ablation(config_path=cfg_abl_cifar)
+        module.run_ablation(config_path='ablation_cifar10')
     elif args.experiment == 'ablation_cifar10_single':
-        _set_env(); module.run_single_combo(config_path=Path(__file__).parent / 'configs' / 'ablation_cifar10.yaml')
+        _set_env(); module.run_single_combo(config_path='ablation_cifar10')
     elif args.experiment == 'ablation_cifar10_plot':
-        _plot_only(lambda: module.run_ablation(config_path=Path(__file__).parent / 'configs' / 'ablation_cifar10.yaml'))
+        _plot_only(lambda: module.run_ablation(config_path='ablation_cifar10'))
 
     elif args.experiment == 'sensitivity_single':
         _set_env(); module.run_single_combo()
