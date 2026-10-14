@@ -603,22 +603,28 @@ def choose_methods_multi():
     return ','.join(unique)
 
 
-DEFAULT_SEEDS = [42, 123, 456, 789, 1024]
+def default_seeds():
+    """Derive TUI defaults from the sole YAML instead of stale hard-coded seeds."""
+    from config_loader import load_experiment_config
+    base_seed = int(load_experiment_config('main_table_mnist')['experiment']['seed'])
+    # Keep deterministic, distinct follow-up seeds for user-selected multi-seed runs.
+    return [base_seed, 123, 456, 789, 1024]
 
 
 def choose_num_seeds():
-    """选择运行几轮（每轮用不同 seed）。返回 seed 列表。"""
+    """选择运行轮数（每轮用不同 seed）。返回从唯一 YAML 派生的 seed 列表。"""
     console.print()
     raw = Prompt.ask("[bold]运行轮数[/bold]（1=单次验证，3-5=论文多seed；留空=1）", default="1").strip()
     try:
         n = max(1, min(10, int(raw)))
     except ValueError:
         n = 1
-    seeds = DEFAULT_SEEDS[:n]
-    if n > len(DEFAULT_SEEDS):
+    configured = default_seeds()
+    seeds = configured[:n]
+    if n > len(configured):
         import random
-        rng = random.Random(42)
-        seeds = DEFAULT_SEEDS + [rng.randint(1, 9999) for _ in range(n - len(DEFAULT_SEEDS))]
+        rng = random.Random(configured[0])
+        seeds = configured + [rng.randint(1, 9999) for _ in range(n - len(configured))]
     console.print(f"[green]将跑 {n} 轮，seeds: {seeds}[/green]")
     return seeds
 
