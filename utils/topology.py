@@ -23,19 +23,21 @@ def generate_ring_topology(n):
 
 
 def generate_mesh_topology(n, degree=4, seed=None):
-    """生成无向随机正则拓扑，使每个节点严格具有 ``degree`` 个邻居。"""
+    """每个节点随机选 degree 个邻居，再补成无向边（与 SAMA 原版语义一致）。
+    实际度数通常大于 degree、且不规则，符合真实去中心化网络。"""
     if n < 2:
         return [[] for _ in range(n)]
-    if not 0 < degree < n:
-        raise ValueError(f"degree must satisfy 0 < degree < n, got n={n}, degree={degree}")
-    if (n * degree) % 2:
-        raise ValueError(f"n * degree must be even, got n={n}, degree={degree}")
-
-    # networkx 使用独立的整数 seed；该整数由调用方设置好的 NumPy RNG
-    # 产生，因此同一实验 seed 可复现，同时不依赖 networkx 的全局状态。
-    graph_seed = int(np.random.randint(0, 2**32 - 1)) if seed is None else int(seed)
-    graph = nx.random_regular_graph(degree, n, seed=graph_seed)
-    return [sorted(graph.neighbors(i)) for i in range(n)]
+    neighbors = [[] for _ in range(n)]
+    for i in range(n):
+        candidates = [j for j in range(n) if j != i]
+        num_edges = min(degree, len(candidates))
+        selected = np.random.choice(candidates, size=num_edges, replace=False)
+        for j in selected:
+            if j not in neighbors[i]:
+                neighbors[i].append(j)
+            if i not in neighbors[j]:
+                neighbors[j].append(i)
+    return neighbors
 
 
 def generate_small_world_topology(n, degree=4, rewire_prob=0.2, seed=None):

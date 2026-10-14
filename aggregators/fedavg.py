@@ -18,9 +18,11 @@ class FedAvgAggregator(BaseAggregator):
         else:
             neighbor_mat = neighbor_vecs
 
-        # aggregate() 只聚合邻居候选模型；own_vec 由
-        # BaseAggregator.final_update() 通过 alpha 统一注入一次。
-        agg_vec = neighbor_mat.mean(dim=0)
+        # Align the FedAvg baseline with SAMA: aggregate the receiver's local
+        # candidate together with its received neighbor candidates.  The common
+        # final_update() self-anchor remains applied afterwards.
+        vecs = torch.cat([own_vec.unsqueeze(0), neighbor_mat], dim=0)
+        agg_vec = vecs.mean(dim=0)
 
         if return_stats:
             return agg_vec, {'num_neighbors': neighbor_mat.shape[0], 'avg_trust': None}

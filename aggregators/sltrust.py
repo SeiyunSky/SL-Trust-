@@ -97,10 +97,17 @@ class SLTrustAggregator(BaseAggregator):
             if self.mode == 'no_ratio':
                 ratio = 1.0
             elif self.mode == 'short_only':
-                # 短窗口和长窗口都用 S 长度，ratio 可能有轻微波动但无跨期记忆
-                avg_S = sum(hist_list[-self.S:]) / max(len(hist_list[-self.S:]), 1)
-                avg_L = sum(hist_list[-self.S:]) / max(len(hist_list[-self.S:]), 1)
-                ratio = avg_S / (avg_L + self.eps)
+                # 短窗口和长窗口都用 S 长度（无跨期记忆），ratio 可能有轻微波动。
+                # 用非重叠的两段各取 S，模拟"只有短期记忆"：
+                # recent = 最近 S 轮，background = 倒数第 S+1 到 2S 轮。
+                recent = hist_list[-self.S:]
+                background = hist_list[-2 * self.S:-self.S] if len(hist_list) >= 2 * self.S else []
+                if not background:
+                    ratio = 1.0
+                else:
+                    avg_S = sum(recent) / len(recent)
+                    avg_bg = sum(background) / len(background)
+                    ratio = min(1.0, avg_S / (avg_bg + self.eps))
             elif self.mode == 'long_only':
                 # avg_S = avg_L，ratio 恒为 1（验证短窗口的价值）
                 ratio = 1.0

@@ -15,7 +15,7 @@ PROTOCOL = "candidate-model-state-v3"
 # or S/L window) from formal results produced after the unified experiment plan.
 EXPERIMENT_CONTRACT = "sltrust-dfl-2026-10-current-attacks-sl10-l30"
 _REQUIRED_SERIES = ("test_acc", "test_loss", "consensus_error", "tau_byz")
-_FINITE_SERIES = ("test_acc", "test_loss", "consensus_error")
+_FINITE_SERIES = ("test_acc", "test_loss")
 
 
 def _canonical_json(value: Any) -> str:

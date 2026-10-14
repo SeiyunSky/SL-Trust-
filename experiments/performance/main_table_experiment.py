@@ -54,8 +54,12 @@ METHOD_COLORS = {
 METHOD_STYLES = {m: ('-' if m == 'sltrust' else '--') for m in MAIN_METHODS}
 
 # SAMA-aligned attack families plus SLTrust's temporal Gaussian schedules.
-DEFAULT_ATTACKS = ['none', 'gaussian', 'label_flipping', 'alie', 'broken_node',
-                   'burn_in', 'oscillating']
+# Keep the main-table default in lockstep with the complete formal attack
+# registry exposed by paper_all and configs/experiments.yaml.
+DEFAULT_ATTACKS = [
+    'none', 'gaussian', 'label_flipping', 'alie', 'broken_node', 'burn_in',
+    'oscillating', 'gradual_gaussian', 'direction_perturbation',
+]
 MAIN_ATTACKS = list(DEFAULT_ATTACKS)
 ATTACK_LABELS = {
     'none':         'No Attack',

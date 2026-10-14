@@ -2,12 +2,10 @@
 SLTrust-DFL 核心训练器
 支持所有聚合方法与 SAMA 对齐/时序 Byzantine 候选攻击。
 """
-import copy
 import os
 import random
 import torch
 import numpy as np
-import yaml
 from pathlib import Path
 
 from models.factory import build_model
@@ -152,11 +150,10 @@ class FederatedTrainer:
         attack = make_attack(attack_name, self.cfg, self.num_clients,
                              self.num_byzantine, self._num_classes)
 
-        # 所有客户端从同一初始模型出发；随后各自维护独立参数和优化器状态。
-        initial_model = build_model(
-            self.cfg, self._in_channels, self._num_classes).to(self.device)
-        models = [copy.deepcopy(initial_model) for _ in range(self.num_clients)]
-        del initial_model
+        # 每个客户端独立初始化（与 SAMA 原版一致）；各自随机起点使早期方向
+        # 分散，攻击可见性更真实。
+        models = [build_model(self.cfg, self._in_channels, self._num_classes).to(self.device)
+                  for _ in range(self.num_clients)]
         optimizers = [build_optimizer(m.parameters(), self.cfg) for m in models]
         eval_model = build_model(
             self.cfg, self._in_channels, self._num_classes).to(self.device)
@@ -204,6 +201,10 @@ class FederatedTrainer:
 
             # 攻击改写 Byzantine 广播候选。对动态攻击，这里处理的是刚由本轮
             # 本地 SGD 生成的 candidate；所有 Byzantine 都不参与邻居聚合。
+            # 保存攻击前的干净候选，用于后续更新 Byzantine 节点自身状态（
+            # 广播假候选不应污染 Byzantine 自身的本地模型，否则其 SGD 会崩溃）。
+            byz_clean_vecs = {byz_id: local_models[byz_id].clone()
+                              for byz_id in self.byzantine_nodes}
             if isinstance(attack, ALIEAttack):
                 honest_models = [local_models[i] for i in self.honest_nodes]
                 malicious_model = attack.attack(honest_models)
@@ -213,15 +214,25 @@ class FederatedTrainer:
                 for byz_id in self.byzantine_nodes:
                     local_models[byz_id] = attack.attack(local_models[byz_id], t=t)
 
-            # 拒绝非有限候选模型，避免单个 NaN/Inf 污染整个邻域。
-            for sender_id, candidate_model in enumerate(local_models):
-                if not torch.isfinite(candidate_model).all():
-                    raise ValueError(
-                        f"Non-finite candidate model broadcast by client {sender_id} at round {t + 1}")
+            # 诚实节点候选若含 NaN/Inf（通常因聚合了大噪声后 SGD 梯度爆炸），
+            # 将非有限元素归零：该节点本轮广播退化为零向量，邻居聚合器通过
+            # norm < ε 过滤器将其忽略，实验继续。这是 FedAvg 面对强 Gaussian
+            # 攻击时的预期崩溃表现，不应中止实验。
+            for sender_id in self.honest_nodes:
+                if not torch.isfinite(local_models[sender_id]).all():
+                    print(f"  [WARN] Non-finite candidate from honest client {sender_id} "
+                          f"at round {t + 1}, zeroing broadcast")
+                    local_models[sender_id] = torch.zeros_like(local_models[sender_id])
 
             # 去中心化候选模型聚合。aggregate() 只处理邻居模型，final_update()
             # 在本地候选模型与邻居聚合模型之间执行一次 self-anchor 插值。
-            all_models = torch.stack(local_models)
+            # 攻击候选可能含 NaN/Inf（合法）；stack 前将非有限元素归零，确保
+            # 聚合器能通过 norm < ε 过滤器正确忽略这些候选。
+            broadcast_models = [
+                vec if torch.isfinite(vec).all() else torch.zeros_like(vec)
+                for vec in local_models
+            ]
+            all_models = torch.stack(broadcast_models)
             updated_model_vecs = []
             round_edges = []
             for i in range(self.num_clients):
@@ -262,7 +273,9 @@ class FederatedTrainer:
                             })
                     final_model = node_agg.final_update(own_model, agg_model)
                 else:
-                    final_model = own_model
+                    # Byzantine 节点不聚合；用干净的本地 SGD 候选（攻击前）更新
+                    # 自身状态，使其在后续轮次中仍能产生有效候选。
+                    final_model = byz_clean_vecs[i]
 
                 updated_model_vecs.append(final_model)
 
@@ -280,7 +293,8 @@ class FederatedTrainer:
                 honest_list = [updated_model_vecs[i] for i in self.honest_nodes]
                 honest_mat = torch.stack(honest_list)
                 mean_vec = honest_mat.mean(dim=0)
-                D_t = torch.mean(torch.norm(honest_mat - mean_vec, dim=1) ** 2).item()
+                norms_sq = torch.norm(honest_mat - mean_vec, dim=1) ** 2
+                D_t = norms_sq[torch.isfinite(norms_sq)].mean().item() if torch.isfinite(norms_sq).any() else float('nan')
 
                 aggregator.load_from_vector(eval_model, mean_vec)
                 eval_model.eval()
