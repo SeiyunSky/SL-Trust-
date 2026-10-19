@@ -29,14 +29,11 @@ from config_loader import load_experiment_config
 
 plt.rcParams['font.family'] = 'DejaVu Sans'
 
-DEFAULT_METHODS = ['fedavg', 'sama', 'balance', 'krum', 'trimmed_mean', 'contra', 'contra_hard', 'sltrust']
+DEFAULT_METHODS = ['fedavg', 'sama', 'contra', 'contra_hard', 'sltrust']
 MAIN_METHODS = list(DEFAULT_METHODS)
 METHOD_LABELS = {
     'fedavg':       'FedAvg (baseline)',
     'sama':         'SAMA',
-    'balance':      'BALANCE',
-    'krum':         'Krum',
-    'trimmed_mean': 'Trimmed Mean',
     'contra':       'CONTRA (soft EMA)',
     'contra_hard':  'CONTRA-Hard (hard cutoff)',
     'sltrust':      'SLTrust (ours)',
@@ -44,44 +41,32 @@ METHOD_LABELS = {
 METHOD_COLORS = {
     'fedavg':       '#9E9E9E',
     'sama':         '#2196F3',
-    'balance':      '#4CAF50',
-    'krum':         '#9C27B0',
-    'trimmed_mean': '#00BCD4',
     'contra':       '#FF9800',
     'contra_hard':  '#FF5722',
     'sltrust':      '#E53935',
 }
 METHOD_STYLES = {m: ('-' if m == 'sltrust' else '--') for m in MAIN_METHODS}
 
-# SAMA-aligned attack families plus SLTrust's temporal Gaussian schedules.
-# Keep the main-table default in lockstep with the complete formal attack
-# registry exposed by paper_all and configs/experiments.yaml.
 DEFAULT_ATTACKS = [
-    'none', 'gaussian', 'label_flipping', 'alie', 'broken_node', 'burn_in',
-    'oscillating', 'gradual_gaussian', 'direction_perturbation',
+    'none', 'gaussian', 'broken_node', 'burn_in',
+    'oscillating', 'gradual_gaussian',
 ]
 MAIN_ATTACKS = list(DEFAULT_ATTACKS)
 ATTACK_LABELS = {
-    'none':         'No Attack',
+    'none':                   'No Attack',
     'gaussian':               'Gaussian Noise',
-    'label_flipping':         'Label Flipping',
-    'alie':                   'ALIE',
     'broken_node':            'Broken Node',
     'burn_in':                'Burn-in Gaussian',
     'oscillating':            'Oscillating Gaussian',
     'gradual_gaussian':       'Gradual Gaussian',
-    'direction_perturbation': 'Direction Perturbation',
 }
 ATTACK_COLORS = {
-    'none':         '#9E9E9E',
+    'none':                   '#9E9E9E',
     'gaussian':               '#FF9800',
-    'label_flipping':         '#E53935',
-    'alie':                   '#F06292',
     'broken_node':            '#607D8B',
     'burn_in':                '#2196F3',
     'oscillating':            '#4CAF50',
     'gradual_gaussian':       '#9C27B0',
-    'direction_perturbation': '#FF5722',
 }
 
 

@@ -29,7 +29,7 @@ class SLTrustAggregator(BaseAggregator):
         """
         mode: 'full' | 'no_ratio' | 'short_only' | 'long_only' | 'median_bg'
         """
-        valid_modes = {'full', 'no_ratio', 'short_only', 'long_only', 'median_bg'}
+        valid_modes = {'full', 'no_ratio', 'no_clip', 'adaptive', 'short_only', 'long_only', 'median_bg'}
         if not 1 <= S < L:
             raise ValueError(f"SLTrust requires 1 <= S < L, got S={S}, L={L}")
         if not 0 < beta <= 1:
@@ -47,10 +47,12 @@ class SLTrustAggregator(BaseAggregator):
         self.mode = mode
         self._tau: dict[int, float] = {}
         self._phi_hist: dict[int, deque] = {}
+        self._adaptive_S: dict[int, int] = {} if mode == 'adaptive' else {}
 
     def reset(self):
         self._tau.clear()
         self._phi_hist.clear()
+        self._adaptive_S.clear()
 
     def aggregate(self, own_vec, neighbor_vecs, neighbor_ids=None,
                   t=0, T=100, return_stats=False, **kwargs):
@@ -111,6 +113,31 @@ class SLTrustAggregator(BaseAggregator):
             elif self.mode == 'long_only':
                 # avg_S = avg_L，ratio 恒为 1（验证短窗口的价值）
                 ratio = 1.0
+            elif self.mode == 'no_clip':
+                recent = hist_list[-self.S:]
+                background = hist_list[:-self.S]
+                if not background:
+                    ratio = 1.0
+                else:
+                    avg_S = sum(recent) / len(recent)
+                    avg_bg = sum(background) / len(background)
+                    ratio = avg_S / (avg_bg + self.eps)
+            elif self.mode == 'adaptive':
+                if nid not in self._adaptive_S:
+                    self._adaptive_S[nid] = self.S
+                S_eff = self._adaptive_S[nid]
+                recent = hist_list[-S_eff:]
+                background = hist_list[:-S_eff] if len(hist_list) > S_eff else []
+                if not background:
+                    ratio = 1.0
+                else:
+                    avg_S = sum(recent) / len(recent)
+                    avg_bg = sum(background) / len(background)
+                    ratio = min(1.0, avg_S / (avg_bg + self.eps))
+                if ratio >= 0.9:
+                    self._adaptive_S[nid] = min(self.L - 1, S_eff + 1)
+                else:
+                    self._adaptive_S[nid] = max(2, S_eff // 2)
             elif self.mode == 'median_bg':
                 # A3: median 背景窗口变体（SLTrust-M）
                 recent = hist_list[-self.S:]

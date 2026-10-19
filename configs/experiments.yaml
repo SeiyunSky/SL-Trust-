@@ -3,7 +3,7 @@
 defaults:
   experiment:
     name: sltrust_dfl
-    seed: 66
+    seed: 42
     device: cuda
   federated:
     num_clients: 20
@@ -14,7 +14,7 @@ defaults:
   data:
     dataset: mnist
     data_dir: ./data
-    non_iid_alpha: 0.5
+    non_iid_alpha: 0.1
     num_workers: 0
   model:
     name: simple_cnn
@@ -28,63 +28,31 @@ defaults:
     weight_decay: 0.0
     scheduler: none
   logging:
-    log_interval: 10
+    log_interval: 5
     save_dir: ./results
 
 method_params:
   fedavg: {alpha: 0.5}
   sama: {alpha: 0.5}
-  balance: {alpha: 0.5, gamma: 1.5, kappa: 0.1}
-  krum: {alpha: 0.5, byzantine_ratio: 0.2}
-  trimmed_mean: {alpha: 0.5, trim_ratio: 0.1}
   contra: {alpha: 0.5, beta: 0.1}
   contra_hard: {alpha: 0.5, beta: 0.1, threshold: 0.1}
-  sltrust: {alpha: 0.5, beta: 0.1, S: 10, L: 30}
-  sltrust_median: {alpha: 0.5, beta: 0.1, S: 10, L: 30}
-  sltrust_no_ratio: {alpha: 0.5, beta: 0.1, S: 10, L: 30}
-  sltrust_short_only: {alpha: 0.5, beta: 0.1, S: 10, L: 30}
-  sltrust_long_only: {alpha: 0.5, beta: 0.1, S: 10, L: 30}
+  sltrust: {alpha: 0.5, beta: 0.1, S: 3, L: 10}
+  sltrust_no_ratio: {alpha: 0.5, beta: 0.1, S: 3, L: 10}
+  sltrust_no_clip: {alpha: 0.5, beta: 0.1, S: 3, L: 10}
+  sltrust_adaptive: {alpha: 0.5, beta: 0.1, S: 3, L: 10}
+  sltrust_median: {alpha: 0.5, beta: 0.1, S: 3, L: 10}
 
 attack_params:
   none: {}
   gaussian: {std: 10.0}
-  label_flipping: {}
-  alie: {}
   broken_node: {}
-  burn_in: {warmup_rounds: 20, std: 10.0}
-  oscillating: {period_attack: 10, period_rest: 15, std: 10.0}
-  gradual_gaussian: {warmup_rounds: 20, ramp_rounds: 20, std: 10.0}
-  direction_perturbation: {lambda_bd: 0.3}
+  burn_in: {warmup_rounds: 40, std: 10.0}
+  oscillating: {warmup_rounds: 30, period_attack: 10, period_rest: 20, std: 10.0}
+  gradual_gaussian: {warmup_rounds: 40, ramp_rounds: 20, std: 10.0}
 
 presets:
   main_table_mnist:
     experiment: {name: sltrust_dfl_main_table_mnist}
-
-  mvp_mnist:
-    experiment: {name: sltrust_dfl_mvp_mnist}
-    federated: {num_clients: 10, byzantine_ratio: 0.2, num_rounds: 100, local_epochs: 1, batch_size: 128}
-    data: {non_iid_alpha: 0.2}
-    topology: {degree: 4}
-
-  ablation_mnist:
-    experiment: {name: sltrust_dfl_ablation_mnist}
-    data: {non_iid_alpha: 0.2}
-    topology: {degree: 4}
-
-  tau_mnist:
-    experiment: {name: sltrust_dfl_tau_mnist}
-    data: {non_iid_alpha: 0.2}
-    topology: {degree: 4}
-
-  sensitivity_mnist:
-    experiment: {name: sltrust_dfl_sensitivity_mnist}
-    topology: {degree: 4}
-    sensitivity:
-      methods: [contra, sltrust]
-      seeds: [42]
-      burnin_warmups: [0, 20, 40, 60]
-      oscillating_periods: [5, 10, 20]
-      direction_lambdas: [0.05, 0.10, 0.20, 0.30, 0.50]
 
   main_table_cifar10:
     experiment: {name: sltrust_dfl_main_table_cifar10}
@@ -93,67 +61,31 @@ presets:
     model: {name: resnet18_cifar_bn}
     optimizer: {lr: 0.1, momentum: 0.9, weight_decay: 0.0005, scheduler: cosine}
 
-  mvp_cifar10:
-    experiment: {name: sltrust_dfl_mvp_cifar10}
-    federated: {num_clients: 10, byzantine_ratio: 0.2, num_rounds: 100, local_epochs: 1, batch_size: 128}
-    data: {dataset: cifar10, non_iid_alpha: 0.2, augmentation: standard, num_workers: 4}
-    model: {name: resnet18_cifar_bn}
-    topology: {degree: 4}
-    optimizer: {lr: 0.1, momentum: 0.9, weight_decay: 0.0005, scheduler: cosine}
+  ablation_mnist:
+    experiment: {name: sltrust_dfl_ablation_mnist}
 
   ablation_cifar10:
     experiment: {name: sltrust_dfl_ablation_cifar10}
     federated: {num_rounds: 200, local_epochs: 3}
-    data: {dataset: cifar10, non_iid_alpha: 0.2, augmentation: standard, num_workers: 4}
+    data: {dataset: cifar10, non_iid_alpha: 0.5, augmentation: standard, num_workers: 4}
     model: {name: resnet18_cifar_bn}
-    topology: {degree: 4}
     optimizer: {lr: 0.1, momentum: 0.9, weight_decay: 0.0005, scheduler: cosine}
+
+  tau_mnist:
+    experiment: {name: sltrust_dfl_tau_mnist}
 
   tau_cifar10:
     experiment: {name: sltrust_dfl_tau_cifar10}
     federated: {num_rounds: 200, local_epochs: 3}
-    data: {dataset: cifar10, non_iid_alpha: 0.2, augmentation: standard, num_workers: 4}
-    model: {name: resnet18_cifar_bn}
-    topology: {degree: 4}
-    optimizer: {lr: 0.1, momentum: 0.9, weight_decay: 0.0005, scheduler: cosine}
-
-  generalization_cifar100:
-    experiment: {name: sltrust_dfl_generalization_cifar100}
-    federated: {num_rounds: 300}
-    data: {dataset: cifar100, non_iid_alpha: 0.5, augmentation: standard, num_workers: 4}
+    data: {dataset: cifar10, non_iid_alpha: 0.5, augmentation: standard, num_workers: 4}
     model: {name: resnet18_cifar_bn}
     optimizer: {lr: 0.1, momentum: 0.9, weight_decay: 0.0005, scheduler: cosine}
-    matrix:
-      methods: [fedavg, sama, contra, sltrust]
-      attacks: [none, gaussian, label_flipping, alie, broken_node, burn_in, oscillating]
-      seeds: [525, 1024, 2048]
 
-  stress_non_iid_mnist:
-    experiment: {name: sltrust_dfl_stress_non_iid_mnist}
-    stress:
-      dimension: non_iid
-      values: [0.1, 0.5, 1.0]
+  sensitivity_mnist:
+    experiment: {name: sltrust_dfl_sensitivity_mnist}
+    sensitivity:
       methods: [contra, sltrust]
-      attacks: [none, label_flipping, burn_in, oscillating]
-      seeds: [525, 1024, 2048]
-
-  stress_topology_mnist:
-    experiment: {name: sltrust_dfl_stress_topology_mnist}
-    stress:
-      dimension: topology
-      values:
-        - {type: ring}
-        - {type: regular, degree: 6}
-        - {type: small_world, degree: 6, rewire_prob: 0.2}
-      methods: [contra, sltrust]
-      attacks: [none, broken_node, burn_in, oscillating]
-      seeds: [525, 1024, 2048]
-
-  stress_byzantine_ratio_mnist:
-    experiment: {name: sltrust_dfl_stress_byzantine_ratio_mnist}
-    stress:
-      dimension: byzantine_ratio
-      values: [0.1, 0.2, 0.3]
-      methods: [contra, sltrust]
-      attacks: [burn_in, oscillating]
-      seeds: [525, 1024, 2048]
+      seeds: [42]
+      burnin_warmups: [0, 20, 40, 60]
+      oscillating_periods: [5, 10, 20]
+      alpha_values: [0.3, 0.5, 0.7]

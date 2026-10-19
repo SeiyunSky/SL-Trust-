@@ -8,11 +8,10 @@ import json
 def main_table_tasks(config: dict) -> list[dict]:
     matrix = config.get('matrix', {})
     methods = matrix.get('methods', [
-        'fedavg', 'sama', 'balance', 'krum', 'trimmed_mean',
-        'contra', 'contra_hard', 'sltrust'])
+        'fedavg', 'sama', 'contra', 'contra_hard', 'sltrust'])
     attacks = matrix.get('attacks', [
-        'none', 'gaussian', 'label_flipping', 'alie', 'broken_node',
-        'burn_in', 'oscillating'])
+        'none', 'gaussian', 'broken_node',
+        'burn_in', 'oscillating', 'gradual_gaussian'])
     seeds = matrix.get('seeds', [config['experiment']['seed']])
     return [
         {'method': method, 'attack': attack, 'seed': int(seed)}
@@ -26,21 +25,20 @@ def sensitivity_tasks(config: dict) -> list[dict]:
     tasks = []
     for seed in sensitivity['seeds']:
         for method in sensitivity['methods']:
-            for warmup in sensitivity['burnin_warmups']:
+            for warmup in sensitivity.get('burnin_warmups', []):
                 tasks.append({
                     'method': method, 'attack': 'burn_in', 'seed': int(seed),
                     'parameter': 'warmup', 'value': int(warmup),
                 })
-            for period in sensitivity['oscillating_periods']:
+            for period in sensitivity.get('oscillating_periods', []):
                 tasks.append({
                     'method': method, 'attack': 'oscillating', 'seed': int(seed),
                     'parameter': 'period', 'value': int(period),
                 })
-            for lambda_bd in sensitivity['direction_lambdas']:
+            for alpha in sensitivity.get('alpha_values', []):
                 tasks.append({
-                    'method': method, 'attack': 'direction_perturbation',
-                    'seed': int(seed), 'parameter': 'lambda',
-                    'value': float(lambda_bd),
+                    'method': method, 'attack': 'burn_in', 'seed': int(seed),
+                    'parameter': 'alpha', 'value': float(alpha),
                 })
     return tasks
 

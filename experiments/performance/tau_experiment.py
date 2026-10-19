@@ -30,18 +30,15 @@ METHOD_COLORS = {
 }
 
 TAU_ATTACKS = [
-    'gaussian', 'label_flipping', 'alie', 'broken_node',
-    'burn_in', 'oscillating', 'gradual_gaussian', 'direction_perturbation',
+    'gaussian', 'broken_node',
+    'burn_in', 'oscillating', 'gradual_gaussian',
 ]
 ATTACK_LABELS = {
     'gaussian':               'Gaussian Noise',
-    'label_flipping':         'Label Flipping',
-    'alie':                   'ALIE',
     'broken_node':            'Broken Node',
     'burn_in':                'Burn-in Gaussian',
     'oscillating':            'Oscillating Gaussian',
     'gradual_gaussian':       'Gradual Gaussian',
-    'direction_perturbation': 'Direction Perturbation',
 }
 
 

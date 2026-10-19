@@ -19,18 +19,16 @@ from config_loader import load_experiment_config
 
 plt.rcParams['font.family'] = 'DejaVu Sans'
 
-ABLATION_METHODS = ['sltrust', 'sltrust_no_ratio', 'sltrust_short_only', 'sltrust_long_only']
+ABLATION_METHODS = ['sltrust', 'sltrust_no_ratio', 'sltrust_no_clip']
 METHOD_LABELS = {
     'sltrust':            'SLTrust (full, dual-window)',
-    'sltrust_no_ratio':   'SLTrust-noRatio (EMA only)',
-    'sltrust_short_only': 'SLTrust-shortOnly (no long memory)',
-    'sltrust_long_only':  'SLTrust-longOnly (no short window)',
+    'sltrust_no_ratio':   'SLTrust-NoRatio (EMA only)',
+    'sltrust_no_clip':    'SLTrust-NoClip (no min(1,·))',
 }
 METHOD_COLORS = {
     'sltrust':            '#E53935',
     'sltrust_no_ratio':   '#FF9800',
-    'sltrust_short_only': '#2196F3',
-    'sltrust_long_only':  '#4CAF50',
+    'sltrust_no_clip':    '#2196F3',
 }
 
 ABLATION_ATTACKS = ['burn_in', 'oscillating']

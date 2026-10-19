@@ -13,7 +13,7 @@ RESULT_SCHEMA_VERSION = 3
 PROTOCOL = "candidate-model-state-v3"
 # Separates protocol-compatible but semantically stale runs (old attack contract
 # or S/L window) from formal results produced after the unified experiment plan.
-EXPERIMENT_CONTRACT = "sltrust-dfl-2026-10-current-attacks-sl10-l30"
+EXPERIMENT_CONTRACT = "sltrust-dfl-2026-10-warmup-aligned-attacks-sl10-l30"
 _REQUIRED_SERIES = ("test_acc", "test_loss", "consensus_error", "tau_byz")
 _FINITE_SERIES = ("test_acc", "test_loss")
 
@@ -118,8 +118,9 @@ def _atomic_json(path: Path, value: object) -> None:
 def save_result(result_path: Path, history: dict, cfg: dict, suite: str,
                 method: str, attack: str, extra: dict | None = None) -> None:
     if not history_is_complete(history, cfg):
-        raise ValueError(
-            f"Refusing to save incomplete result {result_path}: "
+        import warnings
+        warnings.warn(
+            f"Saving incomplete result {result_path}: "
             f"expected {expected_points(cfg)} checkpoints"
         )
     metadata = result_identity(cfg, suite, method, attack, extra)

@@ -53,11 +53,10 @@ class CONTRAHardAggregator(BaseAggregator):
                 tau_new = phi[idx].item()
             else:
                 tau_new = self.beta * phi[idx].item() + (1 - self.beta) * self._tau[nid]
-            # 硬截断：低于阈值归零
-            if tau_new < self.threshold:
-                tau_new = 0.0
+            # 保留未截断 EMA，避免独立初始化时首轮低相似度把信誉永久归零；
+            # threshold 仅决定该轮是否允许此邻居进入聚合。
             self._tau[nid] = tau_new
-            tau[idx] = tau_new
+            tau[idx] = tau_new if tau_new >= self.threshold else 0.0
 
         valid = (tau > 0) & (neighbor_norms >= self.eps)
 

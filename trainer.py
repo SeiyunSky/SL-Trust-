@@ -12,10 +12,9 @@ from models.factory import build_model
 from utils.data_loader import load_federated_dataset
 from utils.topology import generate_topology
 from utils.optim import build_optimizer, build_scheduler
-from aggregators import (FedAvgAggregator, KrumAggregator, TrimmedMeanAggregator,
-                         BALANCEAggregator, SAMAAggregator, CONTRAAggregator,
+from aggregators import (FedAvgAggregator, SAMAAggregator, CONTRAAggregator,
                          CONTRAHardAggregator, SLTrustAggregator)
-from attacks import ALIEAttack, LabelFlippingAttack, NoAttack, get_attack
+from attacks import BrokenNodeAttack, NoAttack, get_attack
 
 
 # ──────────────────────────────────────────────────────────
@@ -27,13 +26,6 @@ def make_aggregator(method: str, cfg: dict):
     alpha = c.get('alpha', 0.5)
     if method == 'fedavg':
         return FedAvgAggregator(alpha=alpha)
-    elif method == 'krum':
-        return KrumAggregator(alpha=alpha, byzantine_ratio=c.get('byzantine_ratio', 0.2))
-    elif method == 'trimmed_mean':
-        return TrimmedMeanAggregator(alpha=alpha, trim_ratio=c.get('trim_ratio', 0.1))
-    elif method == 'balance':
-        return BALANCEAggregator(alpha=alpha, gamma=c.get('gamma', 0.5),
-                                 kappa=c.get('kappa', 0.1))
     elif method == 'sama':
         return SAMAAggregator(alpha=alpha)
     elif method == 'contra':
@@ -43,7 +35,7 @@ def make_aggregator(method: str, cfg: dict):
                                     threshold=c.get('threshold', 0.1))
     elif method == 'sltrust':
         return SLTrustAggregator(alpha=alpha, beta=c.get('beta', 0.1),
-                                 S=c.get('S', 5), L=c.get('L', 20), mode='full')
+                                 S=c.get('S', 3), L=c.get('L', 10), mode='full')
     elif method == 'sltrust_median':
         c = cfg.get('sltrust_median', cfg.get('sltrust', {}))
         return SLTrustAggregator(alpha=c.get('alpha', 0.5), beta=c.get('beta', 0.1),
@@ -52,14 +44,14 @@ def make_aggregator(method: str, cfg: dict):
         c = cfg.get('sltrust_no_ratio', cfg.get('sltrust', {}))
         return SLTrustAggregator(alpha=c.get('alpha', 0.5), beta=c.get('beta', 0.1),
                                  S=c.get('S', 3), L=c.get('L', 10), mode='no_ratio')
-    elif method == 'sltrust_short_only':
-        c = cfg.get('sltrust_short_only', cfg.get('sltrust', {}))
+    elif method == 'sltrust_no_clip':
+        c = cfg.get('sltrust_no_clip', cfg.get('sltrust', {}))
         return SLTrustAggregator(alpha=c.get('alpha', 0.5), beta=c.get('beta', 0.1),
-                                 S=c.get('S', 3), L=c.get('L', 10), mode='short_only')
-    elif method == 'sltrust_long_only':
-        c = cfg.get('sltrust_long_only', cfg.get('sltrust', {}))
+                                 S=c.get('S', 3), L=c.get('L', 10), mode='no_clip')
+    elif method == 'sltrust_adaptive':
+        c = cfg.get('sltrust_adaptive', cfg.get('sltrust', {}))
         return SLTrustAggregator(alpha=c.get('alpha', 0.5), beta=c.get('beta', 0.1),
-                                 S=c.get('S', 3), L=c.get('L', 10), mode='long_only')
+                                 S=c.get('S', 3), L=c.get('L', 10), mode='adaptive')
     else:
         raise ValueError(f"Unknown method: {method}")
 
@@ -71,10 +63,6 @@ def make_aggregator(method: str, cfg: dict):
 def make_attack(attack_name: str, cfg: dict, num_clients: int,
                 num_byzantine: int, num_classes: int):
     kwargs = dict(cfg.get('attack', {}).get(attack_name, {}))
-    if attack_name == 'alie':
-        kwargs.update(num_byzantine=num_byzantine, num_clients=num_clients)
-    elif attack_name == 'label_flipping':
-        kwargs.setdefault('num_classes', num_classes)
     return get_attack(attack_name, **kwargs)
 
 
@@ -174,8 +162,8 @@ class FederatedTrainer:
         }
 
         for t in range(num_rounds):
-            # Byzantine 客户端永不聚合邻居。只有需要新鲜候选的攻击（标签翻转、
-            # 时序 Gaussian 与方向扰动）才让 Byzantine 执行本地 SGD。
+            # Byzantine 客户端仅在明确的 benign warm-up 阶段走诚实聚合路径，
+            # 以便其干净 candidate 能真实积累信誉；攻击阶段始终不聚合邻居。
             local_models = []
             for i in range(self.num_clients):
                 m = models[i]
@@ -191,8 +179,6 @@ class FederatedTrainer:
                         for data, target in self.train_loaders[i]:
                             data = data.to(self.device, non_blocking=True)
                             target = target.to(self.device, non_blocking=True)
-                            if is_byzantine and isinstance(attack, LabelFlippingAttack):
-                                target = attack.flip_labels(target)
                             optimizers[i].zero_grad()
                             loss = torch.nn.functional.cross_entropy(m(data), target)
                             loss.backward()
@@ -205,12 +191,7 @@ class FederatedTrainer:
             # 广播假候选不应污染 Byzantine 自身的本地模型，否则其 SGD 会崩溃）。
             byz_clean_vecs = {byz_id: local_models[byz_id].clone()
                               for byz_id in self.byzantine_nodes}
-            if isinstance(attack, ALIEAttack):
-                honest_models = [local_models[i] for i in self.honest_nodes]
-                malicious_model = attack.attack(honest_models)
-                for byz_id in self.byzantine_nodes:
-                    local_models[byz_id] = malicious_model.clone()
-            elif not isinstance(attack, NoAttack):
+            if not isinstance(attack, (NoAttack, BrokenNodeAttack)):
                 for byz_id in self.byzantine_nodes:
                     local_models[byz_id] = attack.attack(local_models[byz_id], t=t)
 
@@ -240,7 +221,17 @@ class FederatedTrainer:
                 nb_ids = self.neighbors[i]
                 nb_models = [all_models[j] for j in nb_ids]
 
-                participates = i in self.honest_nodes or isinstance(attack, NoAttack)
+                warmup_participation = (
+                    is_byzantine
+                    and attack.participates_in_warmup_aggregation(t)
+                    if hasattr(attack, 'participates_in_warmup_aggregation')
+                    else False
+                )
+                participates = (
+                    i in self.honest_nodes
+                    or isinstance(attack, NoAttack)
+                    or warmup_participation
+                )
                 if participates:
                     node_agg = aggregators[i]
                     # 信誉型聚合器需要 neighbor_ids 维护逐邻居历史。
@@ -273,8 +264,8 @@ class FederatedTrainer:
                             })
                     final_model = node_agg.final_update(own_model, agg_model)
                 else:
-                    # Byzantine 节点不聚合；用干净的本地 SGD 候选（攻击前）更新
-                    # 自身状态，使其在后续轮次中仍能产生有效候选。
+                    # 攻击期 Byzantine 不聚合；用干净的本地 SGD 候选（攻击前）
+                    # 更新自身状态，使其后续仍能产生有效 fresh candidate。
                     final_model = byz_clean_vecs[i]
 
                 updated_model_vecs.append(final_model)

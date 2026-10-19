@@ -36,7 +36,6 @@ METHOD_COLORS = {
 
 BURNIN_WARMUPS = [0, 20, 40, 60]
 OSC_PERIODS = [5, 10, 20]
-DIRECTION_LAMBDAS = [0.05, 0.10, 0.20, 0.30, 0.50]
 
 # S/L 超参网格扫描配置
 SL_S_VALUES = [2, 3, 5, 10]
@@ -45,12 +44,11 @@ SL_L_VALUES = [5, 10, 20, 40]
 
 def _configure_sensitivity(cfg):
     """Read scan values from the sole experiment YAML preset."""
-    global SENS_METHODS, BURNIN_WARMUPS, OSC_PERIODS, DIRECTION_LAMBDAS
+    global SENS_METHODS, BURNIN_WARMUPS, OSC_PERIODS
     sensitivity = cfg['sensitivity']
     SENS_METHODS = list(sensitivity['methods'])
-    BURNIN_WARMUPS = list(sensitivity['burnin_warmups'])
-    OSC_PERIODS = list(sensitivity['oscillating_periods'])
-    DIRECTION_LAMBDAS = list(sensitivity['direction_lambdas'])
+    BURNIN_WARMUPS = list(sensitivity.get('burnin_warmups', BURNIN_WARMUPS))
+    OSC_PERIODS = list(sensitivity.get('oscillating_periods', OSC_PERIODS))
 
 
 def _cache_path(save_dir: Path, dataset: str, method: str, attack: str,
@@ -70,7 +68,6 @@ def run_single_combo(config_path=None):
     seed_str = os.environ.get('MVP_SEED', '')
     warmup_str = os.environ.get('MVP_WARMUP', '')
     period_str = os.environ.get('MVP_PERIOD', '')
-    lambda_str = os.environ.get('MVP_LAMBDA', '')
 
     if config_path is None:
         config_path = 'sensitivity_mnist'
@@ -98,22 +95,13 @@ def run_single_combo(config_path=None):
         cfg['attack']['oscillating']['period_attack'] = period
         param_name = 'osc_period'
         param_val = period
-    elif lambda_str:
-        lambda_bd = float(lambda_str)
-        cfg['attack']['direction_perturbation']['lambda_bd'] = lambda_bd
-        param_name = 'direction_lambda'
-        param_val = lambda_bd
     else:
-        # 默认用 config 里的值
         if attack_name == 'burn_in':
             param_name = 'burnin_warmup'
             param_val = cfg['attack']['burn_in']['warmup_rounds']
         elif attack_name == 'oscillating':
             param_name = 'osc_period'
             param_val = cfg['attack']['oscillating']['period_attack']
-        elif attack_name == 'direction_perturbation':
-            param_name = 'direction_lambda'
-            param_val = cfg['attack']['direction_perturbation']['lambda_bd']
         else:
             raise ValueError(f"Unsupported sensitivity attack: {attack_name}")
 
@@ -215,42 +203,12 @@ def run_sensitivity(config_path=None):
                     'std': float(np.std(accs)) if len(accs) > 1 else 0.0,
                 }
 
-    direction_results = {m: {} for m in SENS_METHODS}
-    for lambda_bd in DIRECTION_LAMBDAS:
-        for method in SENS_METHODS:
-            base = save_dir / dataset / 'sensitivity' / f'direction_lambda_{lambda_bd}'
-            seed_dirs = sorted(base.glob('seed_*')) if base.exists() else []
-            accs = []
-            for sd in seed_dirs:
-                p = sd / f"{method}_direction_perturbation.json"
-                seed_cfg = json.loads(json.dumps(cfg))
-                seed_cfg['experiment']['seed'] = int(sd.name.removeprefix('seed_'))
-                seed_cfg['attack']['direction_perturbation']['lambda_bd'] = lambda_bd
-                h = load_cached_result(p, seed_cfg, 'sensitivity', method,
-                                       'direction_perturbation',
-                                       {'parameter': 'direction_lambda', 'value': lambda_bd})
-                if h and h['test_acc']:
-                    accs.append(h['test_acc'][-1])
-            p = base / f"{method}_direction_perturbation.json"
-            base_cfg = json.loads(json.dumps(cfg))
-            base_cfg['attack']['direction_perturbation']['lambda_bd'] = lambda_bd
-            h = load_cached_result(p, base_cfg, 'sensitivity', method,
-                                   'direction_perturbation',
-                                   {'parameter': 'direction_lambda', 'value': lambda_bd})
-            if h and h['test_acc']:
-                accs.append(h['test_acc'][-1])
-            if accs:
-                direction_results[method][lambda_bd] = {
-                    'mean': float(np.mean(accs)),
-                    'std': float(np.std(accs)) if len(accs) > 1 else 0.0,
-                }
-
-    _plot_sensitivity(burnin_results, osc_results, direction_results, save_dir, dataset, cfg)
+    _plot_sensitivity(burnin_results, osc_results, save_dir, dataset, cfg)
     _plot_sl_heatmap(save_dir, dataset, cfg)
-    return burnin_results, osc_results, direction_results
+    return burnin_results, osc_results
 
 
-def _plot_sensitivity(burnin_results, osc_results, direction_results, save_dir, dataset, cfg):
+def _plot_sensitivity(burnin_results, osc_results, save_dir, dataset, cfg):
     d = get_result_dir(save_dir, dataset, 'sensitivity')
     byz = cfg['federated']['byzantine_ratio']
     alpha_noniid = cfg['data'].get('non_iid_alpha', 0.5)
@@ -324,41 +282,6 @@ def _plot_sensitivity(burnin_results, osc_results, direction_results, save_dir, 
         plt.savefig(d / 'osc_period_sweep.png', dpi=300, bbox_inches='tight')
         plt.close()
         print(f"  sensitivity/osc_period_sweep.png saved")
-
-    # 图3: Direction perturbation lambda vs accuracy
-    fig, ax = plt.subplots(figsize=(8, 5))
-    for method in SENS_METHODS:
-        xs, ys, errs = [], [], []
-        for lambda_bd in DIRECTION_LAMBDAS:
-            info = direction_results[method].get(lambda_bd)
-            if info:
-                xs.append(lambda_bd)
-                ys.append(info['mean'])
-                errs.append(info['std'])
-        if xs:
-            ax.errorbar(xs, ys, yerr=errs, label=METHOD_LABELS[method],
-                        color=METHOD_COLORS[method],
-                        linewidth=2.5 if method == 'sltrust' else 1.8,
-                        linestyle='-' if method == 'sltrust' else '--',
-                        marker='^', markersize=8, capsize=4)
-    if not any(direction_results[method] for method in SENS_METHODS):
-        plt.close()
-        print("  sensitivity/direction_lambda_sweep.png skipped (no verified data)")
-    else:
-        ax.set_xlabel('Direction Perturbation Strength λ', fontsize=12)
-        ax.set_ylabel('Final Test Accuracy (%)', fontsize=12)
-        ax.set_ylim(0, 100)
-        ax.set_title(
-            f'Sensitivity: Direction Perturbation Strength  |  {dataset.upper()}  |  '
-            f'Byzantine={byz:.0%}  Non-IID α={alpha_noniid}',
-            fontsize=12, fontweight='bold')
-        ax.legend(fontsize=11)
-        ax.grid(True, alpha=0.3)
-        ax.set_xticks(DIRECTION_LAMBDAS)
-        plt.tight_layout()
-        plt.savefig(d / 'direction_lambda_sweep.png', dpi=300, bbox_inches='tight')
-        plt.close()
-        print(f"  sensitivity/direction_lambda_sweep.png saved")
 
     # 终端汇总
     print("\n" + "=" * 60)
